@@ -53,5 +53,9 @@ ENV NODE_ENV=production \
 
 EXPOSE 3100
 
+
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
 USER root
-CMD ["node", "--import", "./server/node_modules/tsx/dist/loader.mjs", "server/dist/index.js"]
+CMD ["/app/docker-entrypoint.sh"]
