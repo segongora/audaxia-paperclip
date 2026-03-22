@@ -53,5 +53,5 @@ ENV NODE_ENV=production \
 
 EXPOSE 3100
 
-USER node
-CMD ["sh", "-c", "mkdir -p /paperclip/instances/default/logs && chmod -R 777 /paperclip && node server/dist/index.js"]
+USER root
+CMD ["sh", "-c", "mkdir -p /paperclip && chmod 777 /paperclip && mkdir -p /paperclip/instances/default/logs && chmod -R 777 /paperclip && node server/dist/index.js"]
