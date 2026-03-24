@@ -156,8 +156,8 @@ async function sendViaSMTP(
     socket.on("error", reject);
 
     socket.once("connect", async () => {
+      const smtp = smtpDialog(socket);
       try {
-        const smtp = smtpDialog(socket);
 
         // Greeting
         await smtp.expect(220);

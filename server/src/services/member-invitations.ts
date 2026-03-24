@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt, timingSafeEqual, type BinaryLike } from "node:crypto";
 import { promisify } from "node:util";
 import { and, eq, gt, isNull, desc } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -12,7 +12,12 @@ import {
   memberInvitations,
 } from "@paperclipai/db";
 
-const scryptAsync = promisify(scrypt);
+const scryptAsync = promisify(scrypt) as (
+  password: BinaryLike,
+  salt: BinaryLike,
+  keylen: number,
+  options: { N: number; r: number; p: number },
+) => Promise<Buffer>;
 
 const INVITE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
 const RATE_LIMIT_MAX = 10; // max validation attempts per hour per token
