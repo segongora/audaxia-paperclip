@@ -21,7 +21,6 @@ export function Issues() {
   const queryClient = useQueryClient();
 
   const initialSearch = searchParams.get("q") ?? "";
-  const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const handleSearchChange = useCallback((search: string) => {
     clearTimeout(debounceRef.current);
@@ -87,8 +86,8 @@ export function Issues() {
   }, [setBreadcrumbs]);
 
   const { data: issues, isLoading, error } = useQuery({
-    queryKey: [...queryKeys.issues.list(selectedCompanyId!), "participant-agent", participantAgentId ?? "__all__"],
-    queryFn: () => issuesApi.list(selectedCompanyId!, { participantAgentId }),
+    queryKey: queryKeys.issues.list(selectedCompanyId!),
+    queryFn: () => issuesApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
 
@@ -118,7 +117,6 @@ export function Issues() {
       initialSearch={initialSearch}
       onSearchChange={handleSearchChange}
       onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
-      searchFilters={participantAgentId ? { participantAgentId } : undefined}
     />
   );
 }

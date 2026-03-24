@@ -67,7 +67,7 @@ async function createTempDatabase(): Promise<string> {
     password: "paperclip",
     port,
     persistent: true,
-    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+    initdbFlags: ["--encoding=UTF8", "--locale=C"],
     onLog: () => {},
     onError: () => {},
   });

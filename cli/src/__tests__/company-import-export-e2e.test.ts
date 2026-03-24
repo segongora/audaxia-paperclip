@@ -1,12 +1,11 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createStoredZipArchive } from "./helpers/zip.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -63,7 +62,7 @@ async function startTempDatabase() {
     password: "paperclip",
     port,
     persistent: true,
-    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+    initdbFlags: ["--encoding=UTF8", "--locale=C"],
     onLog: () => {},
     onError: () => {},
   });
@@ -181,19 +180,6 @@ function createCliEnv() {
   delete env.PAPERCLIP_MIGRATION_AUTO_APPLY;
   delete env.PAPERCLIP_UI_DEV_MIDDLEWARE;
   return env;
-}
-
-function collectTextFiles(root: string, current: string, files: Record<string, string>) {
-  for (const entry of readdirSync(current, { withFileTypes: true })) {
-    const absolutePath = path.join(current, entry.name);
-    if (entry.isDirectory()) {
-      collectTextFiles(root, absolutePath, files);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    const relativePath = path.relative(root, absolutePath).replace(/\\/g, "/");
-    files[relativePath] = readFileSync(absolutePath, "utf8");
-  }
 }
 
 async function stopServerProcess(child: ServerProcess | null) {
@@ -359,8 +345,6 @@ describe("paperclipai company import/export e2e", () => {
       },
     );
 
-    const largeIssueDescription = `Round-trip the company package through the CLI.\n\n${"portable-data ".repeat(12_000)}`;
-
     const sourceIssue = await api<{ id: string; title: string; identifier: string }>(
       apiBase,
       `/api/companies/${sourceCompany.id}/issues`,
@@ -369,7 +353,7 @@ describe("paperclipai company import/export e2e", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           title: "Validate company import/export",
-          description: largeIssueDescription,
+          description: "Round-trip the company package through the CLI.",
           status: "todo",
           projectId: sourceProject.id,
           assigneeAgentId: sourceAgent.id,
@@ -413,7 +397,6 @@ describe("paperclipai company import/export e2e", () => {
         `Imported ${sourceCompany.name}`,
         "--include",
         "company,agents,projects,issues",
-        "--yes",
       ],
       { apiBase, configPath },
     );
@@ -487,7 +470,6 @@ describe("paperclipai company import/export e2e", () => {
         "company,agents,projects,issues",
         "--collision",
         "rename",
-        "--yes",
       ],
       { apiBase, configPath },
     );
@@ -512,32 +494,5 @@ describe("paperclipai company import/export e2e", () => {
     expect(new Set(twiceImportedAgents.map((agent) => agent.name)).size).toBe(2);
     expect(twiceImportedProjects).toHaveLength(2);
     expect(twiceImportedIssues).toHaveLength(2);
-
-    const zipPath = path.join(tempRoot, "exported-company.zip");
-    const portableFiles: Record<string, string> = {};
-    collectTextFiles(exportDir, exportDir, portableFiles);
-    writeFileSync(zipPath, createStoredZipArchive(portableFiles, "paperclip-demo"));
-
-    const importedFromZip = await runCliJson<{
-      company: { id: string; name: string; action: string };
-      agents: Array<{ id: string | null; action: string; name: string }>;
-    }>(
-      [
-        "company",
-        "import",
-        zipPath,
-        "--target",
-        "new",
-        "--new-company-name",
-        `Zip Imported ${sourceCompany.name}`,
-        "--include",
-        "company,agents,projects,issues",
-        "--yes",
-      ],
-      { apiBase, configPath },
-    );
-
-    expect(importedFromZip.company.action).toBe("created");
-    expect(importedFromZip.agents.some((agent) => agent.action === "created")).toBe(true);
   }, 60_000);
 });

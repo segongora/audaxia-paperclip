@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link } from "@/lib/router";
 import type { Issue } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -52,17 +51,6 @@ function issueModeForExistingWorkspace(mode: string | null | undefined) {
   if (mode === "isolated_workspace" || mode === "operator_branch" || mode === "shared_workspace") return mode;
   if (mode === "adapter_managed" || mode === "cloud_sandbox") return "agent_default";
   return "shared_workspace";
-}
-
-function shouldPresentExistingWorkspaceSelection(issue: Issue) {
-  const persistedMode =
-    issue.currentExecutionWorkspace?.mode
-    ?? issue.executionWorkspaceSettings?.mode
-    ?? issue.executionWorkspacePreference;
-  return Boolean(
-    issue.executionWorkspaceId &&
-    (persistedMode === "isolated_workspace" || persistedMode === "operator_branch"),
-  );
 }
 
 interface IssuePropertiesProps {
@@ -280,6 +268,10 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
       ? currentProject?.executionWorkspacePolicy ?? null
       : null;
   const currentProjectSupportsExecutionWorkspace = Boolean(currentProjectExecutionWorkspacePolicy?.enabled);
+  const currentExecutionWorkspaceSelection =
+    issue.executionWorkspacePreference
+    ?? issue.executionWorkspaceSettings?.mode
+    ?? defaultExecutionWorkspaceModeForProject(currentProject);
   const { data: reusableExecutionWorkspaces } = useQuery({
     queryKey: queryKeys.executionWorkspaces.list(companyId!, {
       projectId: issue.projectId ?? undefined,
@@ -306,17 +298,9 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
     }
     return Array.from(seen.values());
   }, [reusableExecutionWorkspaces]);
-  const selectedReusableExecutionWorkspace =
-    deduplicatedReusableWorkspaces.find((workspace) => workspace.id === issue.executionWorkspaceId)
-    ?? issue.currentExecutionWorkspace
-    ?? null;
-  const currentExecutionWorkspaceSelection = shouldPresentExistingWorkspaceSelection(issue)
-    ? "reuse_existing"
-    : (
-        issue.executionWorkspacePreference
-        ?? issue.executionWorkspaceSettings?.mode
-        ?? defaultExecutionWorkspaceModeForProject(currentProject)
-      );
+  const selectedReusableExecutionWorkspace = deduplicatedReusableWorkspaces.find(
+    (workspace) => workspace.id === issue.executionWorkspaceId,
+  );
   const projectLink = (id: string | null) => {
     if (!id) return null;
     const project = projects?.find((p) => p.id === id) ?? null;
@@ -345,7 +329,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
           style={{
             borderColor: label.color,
             backgroundColor: `${label.color}22`,
-            color: pickTextColorForPillBg(label.color, 0.13),
+            color: label.color,
           }}
         >
           {label.name}
@@ -696,9 +680,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
               >
                 {EXECUTION_WORKSPACE_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
-                    {option.value === "reuse_existing" && selectedReusableExecutionWorkspace?.mode === "isolated_workspace"
-                      ? "Existing isolated workspace"
-                      : option.label}
+                    {option.label}
                   </option>
                 ))}
               </select>

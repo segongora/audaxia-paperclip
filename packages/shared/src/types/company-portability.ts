@@ -33,11 +33,6 @@ export interface CompanyPortabilityCompanyManifestEntry {
   requireBoardApprovalForNewAgents: boolean;
 }
 
-export interface CompanyPortabilitySidebarOrder {
-  agents: string[];
-  projects: string[];
-}
-
 export interface CompanyPortabilityProjectManifestEntry {
   slug: string;
   name: string;
@@ -49,38 +44,7 @@ export interface CompanyPortabilityProjectManifestEntry {
   color: string | null;
   status: string | null;
   executionWorkspacePolicy: Record<string, unknown> | null;
-  workspaces: CompanyPortabilityProjectWorkspaceManifestEntry[];
   metadata: Record<string, unknown> | null;
-}
-
-export interface CompanyPortabilityProjectWorkspaceManifestEntry {
-  key: string;
-  name: string;
-  sourceType: string | null;
-  repoUrl: string | null;
-  repoRef: string | null;
-  defaultRef: string | null;
-  visibility: string | null;
-  setupCommand: string | null;
-  cleanupCommand: string | null;
-  metadata: Record<string, unknown> | null;
-  isPrimary: boolean;
-}
-
-export interface CompanyPortabilityIssueRoutineTriggerManifestEntry {
-  kind: string;
-  label: string | null;
-  enabled: boolean;
-  cronExpression: string | null;
-  timezone: string | null;
-  signingMode: string | null;
-  replayWindowSec: number | null;
-}
-
-export interface CompanyPortabilityIssueRoutineManifestEntry {
-  concurrencyPolicy: string | null;
-  catchUpPolicy: string | null;
-  triggers: CompanyPortabilityIssueRoutineTriggerManifestEntry[];
 }
 
 export interface CompanyPortabilityIssueManifestEntry {
@@ -89,12 +53,9 @@ export interface CompanyPortabilityIssueManifestEntry {
   title: string;
   path: string;
   projectSlug: string | null;
-  projectWorkspaceKey: string | null;
   assigneeAgentSlug: string | null;
   description: string | null;
-  recurring: boolean;
-  routine: CompanyPortabilityIssueRoutineManifestEntry | null;
-  legacyRecurrence: Record<string, unknown> | null;
+  recurrence: Record<string, unknown> | null;
   status: string | null;
   priority: string | null;
   labelIds: string[];
@@ -149,7 +110,6 @@ export interface CompanyPortabilityManifest {
   } | null;
   includes: CompanyPortabilityInclude;
   company: CompanyPortabilityCompanyManifestEntry | null;
-  sidebar: CompanyPortabilitySidebarOrder | null;
   agents: CompanyPortabilityAgentManifestEntry[];
   skills: CompanyPortabilitySkillManifestEntry[];
   projects: CompanyPortabilityProjectManifestEntry[];
@@ -285,13 +245,6 @@ export interface CompanyPortabilityImportResult {
     name: string;
     reason: string | null;
   }[];
-  projects: {
-    slug: string;
-    id: string | null;
-    action: "created" | "updated" | "skipped";
-    name: string;
-    reason: string | null;
-  }[];
   envInputs: CompanyPortabilityEnvInput[];
   warnings: string[];
 }
@@ -305,5 +258,4 @@ export interface CompanyPortabilityExportRequest {
   projectIssues?: string[];
   selectedFiles?: string[];
   expandReferencedSkills?: boolean;
-  sidebarOrder?: Partial<CompanyPortabilitySidebarOrder>;
 }

@@ -3,7 +3,6 @@ import {
   buildExecutionWorkspaceAdapterConfig,
   defaultIssueExecutionWorkspaceSettingsForProject,
   gateProjectExecutionWorkspacePolicy,
-  issueExecutionWorkspaceModeForPersistedWorkspace,
   parseIssueExecutionWorkspaceSettings,
   parseProjectExecutionWorkspacePolicy,
   resolveExecutionWorkspaceMode,
@@ -141,16 +140,6 @@ describe("execution workspace policy helpers", () => {
     ).toEqual({
       mode: "shared_workspace",
     });
-  });
-
-  it("maps persisted execution workspace modes back to issue settings", () => {
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("isolated_workspace")).toBe("isolated_workspace");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("operator_branch")).toBe("operator_branch");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("shared_workspace")).toBe("shared_workspace");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("adapter_managed")).toBe("agent_default");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("cloud_sandbox")).toBe("agent_default");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace(null)).toBe("agent_default");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace(undefined)).toBe("agent_default");
   });
 
   it("disables project execution workspace policy when the instance flag is off", () => {
