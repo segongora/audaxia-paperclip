@@ -149,16 +149,17 @@ async function sendViaSMTP(
   const domain = config.from.split("@")[1] ?? "localhost";
 
   await new Promise<void>((resolve, reject) => {
-    const socket = config.secure
+    const rawSocket = config.secure
       ? tls.connect({ host: config.host, port: config.port })
       : net.createConnection({ host: config.host, port: config.port });
 
-    socket.on("error", reject);
+    rawSocket.on("error", reject);
 
-    socket.once("connect", async () => {
-      const smtp = smtpDialog(socket);
+    // For direct TLS, wait for secureConnect; for plain TCP, wait for connect.
+    const connectEvent = config.secure ? "secureConnect" : "connect";
+    (rawSocket as net.Socket).once(connectEvent, async () => {
+      let smtp = smtpDialog(rawSocket);
       try {
-
         // Greeting
         await smtp.expect(220);
         smtp.send(`EHLO ${domain}`);
@@ -169,17 +170,15 @@ async function sendViaSMTP(
           smtp.send("STARTTLS");
           const starttlsResp = await smtp.expect(220).catch(() => null);
           if (starttlsResp) {
-            await new Promise<void>((res, rej) => {
-              const tlsSocket = tls.connect(
-                { socket: socket as net.Socket, host: config.host },
-                () => res(),
+            // Upgrade the raw socket to TLS and create a fresh dialog on it
+            const tlsSocket = await new Promise<tls.TLSSocket>((res, rej) => {
+              const ts = tls.connect(
+                { socket: rawSocket as net.Socket, host: config.host },
+                () => res(ts),
               );
-              tlsSocket.on("error", rej);
-              // Replace socket reference with upgraded TLS socket for subsequent writes
-              (smtp as unknown as { _socket: tls.TLSSocket })._socket = tlsSocket;
-              socket.write = tlsSocket.write.bind(tlsSocket);
-              tlsSocket.on("data", (chunk) => socket.emit("data", chunk));
+              ts.on("error", rej);
             });
+            smtp = smtpDialog(tlsSocket);
             smtp.send(`EHLO ${domain}`);
             await smtp.expect(250);
           }
