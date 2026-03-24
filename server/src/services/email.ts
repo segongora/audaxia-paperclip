@@ -170,6 +170,8 @@ async function sendViaSMTP(
           smtp.send("STARTTLS");
           const starttlsResp = await smtp.expect(220).catch(() => null);
           if (starttlsResp) {
+            // Remove the plaintext data listener so it doesn't consume TLS handshake bytes
+            rawSocket.removeAllListeners("data");
             // Upgrade the raw socket to TLS and create a fresh dialog on it
             const tlsSocket = await new Promise<tls.TLSSocket>((res, rej) => {
               const ts = tls.connect(
