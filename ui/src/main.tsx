@@ -40,10 +40,10 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <BrowserRouter>
-          <CompanyProvider>
-            <ToastProvider>
-              <LiveUpdatesProvider>
+        <CompanyProvider>
+          <ToastProvider>
+            <LiveUpdatesProvider>
+              <BrowserRouter>
                 <TooltipProvider>
                   <BreadcrumbProvider>
                     <SidebarProvider>
@@ -57,10 +57,10 @@ createRoot(document.getElementById("root")!).render(
                     </SidebarProvider>
                   </BreadcrumbProvider>
                 </TooltipProvider>
-              </LiveUpdatesProvider>
-            </ToastProvider>
-          </CompanyProvider>
-        </BrowserRouter>
+              </BrowserRouter>
+            </LiveUpdatesProvider>
+          </ToastProvider>
+        </CompanyProvider>
       </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>

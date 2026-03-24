@@ -169,7 +169,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function openUrl(url: string): boolean {
+function openUrl(url: string): boolean {
   const platform = process.platform;
   try {
     if (platform === "darwin") {
