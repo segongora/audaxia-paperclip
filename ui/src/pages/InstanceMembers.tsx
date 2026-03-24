@@ -4,6 +4,7 @@ import { Mail, Users, RefreshCw, Trash2, AlertCircle } from "lucide-react";
 import { instanceMembersApi } from "@/api/instanceMembers";
 import { authApi } from "@/api/auth";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 
 function formatDate(iso: string) {
@@ -21,10 +22,8 @@ function validateEmail(email: string): boolean {
 export function InstanceMembers() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
+  const { pushToast } = useToast();
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,22 +52,22 @@ export function InstanceMembers() {
   const inviteMutation = useMutation({
     mutationFn: (email: string) => instanceMembersApi.invite(email),
     onSuccess: (result) => {
-      setInviteError(null);
       setInviteEmail("");
       if (result.alreadyInvited) {
-        setInviteSuccess(result.message ?? "A pending invitation already exists for this email.");
+        pushToast({ tone: "warn", title: "Already invited", body: result.message ?? "A pending invitation already exists for this email." });
       } else if (!result.emailSent) {
-        setInviteSuccess(
-          `Invitation created but email could not be sent: ${result.emailError ?? "unknown error"}. Share the invite link manually.`,
-        );
+        pushToast({
+          tone: "error",
+          title: "Email not sent",
+          body: `Invitation created but email could not be sent: ${result.emailError ?? "unknown error"}. Share the invite link manually.`,
+        });
       } else {
-        setInviteSuccess(`Invitation sent to ${inviteEmail}.`);
+        pushToast({ tone: "success", title: "Invitation sent", body: `Invite email sent to ${inviteEmail}.` });
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.instance.members });
     },
     onError: (err) => {
-      setInviteSuccess(null);
-      setInviteError(err instanceof Error ? err.message : "Failed to send invitation.");
+      pushToast({ tone: "error", title: "Failed to send invitation", body: err instanceof Error ? err.message : "Unknown error." });
     },
   });
 
@@ -76,27 +75,26 @@ export function InstanceMembers() {
     mutationFn: (inviteId: string) => instanceMembersApi.resend(inviteId),
     onSuccess: (result) => {
       if (result.emailSent) {
-        setInviteSuccess("Invitation resent successfully.");
+        pushToast({ tone: "success", title: "Invitation resent" });
       } else {
-        setInviteSuccess(`Resend failed: ${result.emailError ?? "unknown error"}.`);
+        pushToast({ tone: "error", title: "Resend failed", body: result.emailError ?? "Unknown error." });
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.instance.members });
     },
     onError: (err) => {
-      setInviteError(err instanceof Error ? err.message : "Failed to resend invitation.");
+      pushToast({ tone: "error", title: "Failed to resend invitation", body: err instanceof Error ? err.message : "Unknown error." });
     },
   });
 
   const removeMutation = useMutation({
     mutationFn: (userId: string) => instanceMembersApi.removeMember(userId),
     onSuccess: () => {
-      setRemoveError(null);
       setConfirmRemoveId(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.instance.members });
     },
     onError: (err) => {
       setConfirmRemoveId(null);
-      setRemoveError(err instanceof Error ? err.message : "Failed to remove member.");
+      pushToast({ tone: "error", title: "Failed to remove member", body: err instanceof Error ? err.message : "Unknown error." });
     },
   });
 
@@ -130,8 +128,8 @@ export function InstanceMembers() {
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
             <span className="font-medium">Email service not configured.</span> Set{" "}
-            <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/50">SMTP_HOST</code> (and related env vars) to
-            enable email invitations. Without email, invitations cannot be sent.
+            <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/50">SMTP_PASSWORD</code> (Resend API key) and{" "}
+            <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/50">SMTP_FROM</code> to enable email invitations.
           </div>
         </div>
       )}
@@ -146,11 +144,7 @@ export function InstanceMembers() {
               type="email"
               placeholder="name@example.com"
               value={inviteEmail}
-              onChange={(e) => {
-                setInviteEmail(e.target.value);
-                setInviteError(null);
-                setInviteSuccess(null);
-              }}
+              onChange={(e) => setInviteEmail(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && validateEmail(inviteEmail) && !inviteMutation.isPending) {
                   inviteMutation.mutate(inviteEmail.trim());
@@ -170,20 +164,7 @@ export function InstanceMembers() {
           </button>
         </div>
 
-        {inviteError && (
-          <p className="mt-2 text-sm text-destructive">{inviteError}</p>
-        )}
-        {inviteSuccess && (
-          <p className="mt-2 text-sm text-green-600 dark:text-green-400">{inviteSuccess}</p>
-        )}
       </section>
-
-      {/* Remove error */}
-      {removeError && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {removeError}
-        </div>
-      )}
 
       {/* Active members */}
       <section className="rounded-xl border border-border bg-card">
@@ -236,10 +217,7 @@ export function InstanceMembers() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          setRemoveError(null);
-                          setConfirmRemoveId(member.id);
-                        }}
+                        onClick={() => setConfirmRemoveId(member.id)}
                         className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive"
                         aria-label={`Remove ${member.name}`}
                       >
@@ -279,11 +257,7 @@ export function InstanceMembers() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setInviteError(null);
-                    setInviteSuccess(null);
-                    resendMutation.mutate(inv.id);
-                  }}
+                  onClick={() => resendMutation.mutate(inv.id)}
                   disabled={resendMutation.isPending}
                   className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
                 >
