@@ -382,6 +382,35 @@ export function memberInvitationService(db: Db) {
     return { user: { id: user.id, email: user.email, name: user.name }, sessionToken };
   }
 
+  async function revokeInvitation(
+    inviteId: string,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const existing = await db
+      .select()
+      .from(memberInvitations)
+      .where(eq(memberInvitations.id, inviteId))
+      .then((rows) => rows[0] ?? null);
+
+    if (!existing) {
+      return { ok: false, reason: "not_found" };
+    }
+
+    if (existing.acceptedAt) {
+      return { ok: false, reason: "already_accepted" };
+    }
+
+    if (existing.revokedAt) {
+      return { ok: false, reason: "already_revoked" };
+    }
+
+    await db
+      .update(memberInvitations)
+      .set({ revokedAt: new Date(), updatedAt: new Date() })
+      .where(eq(memberInvitations.id, inviteId));
+
+    return { ok: true };
+  }
+
   async function removeMember(
     targetUserId: string,
     requestingUserId: string,
@@ -436,6 +465,7 @@ export function memberInvitationService(db: Db) {
     findUserByEmail,
     createInvitation,
     resendInvitation,
+    revokeInvitation,
     validateToken,
     createUserFromInvite,
     acceptInviteExistingUser,

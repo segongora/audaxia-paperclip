@@ -25,6 +25,7 @@ export function InstanceMembers() {
   const { pushToast } = useToast();
   const [inviteEmail, setInviteEmail] = useState("");
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [confirmRevokeInviteId, setConfirmRevokeInviteId] = useState<string | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([
@@ -83,6 +84,19 @@ export function InstanceMembers() {
     },
     onError: (err) => {
       pushToast({ tone: "error", title: "Failed to resend invitation", body: err instanceof Error ? err.message : "Unknown error." });
+    },
+  });
+
+  const revokeInviteMutation = useMutation({
+    mutationFn: (inviteId: string) => instanceMembersApi.revokeInvite(inviteId),
+    onSuccess: () => {
+      setConfirmRevokeInviteId(null);
+      pushToast({ tone: "success", title: "Invitation deleted" });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.instance.members });
+    },
+    onError: (err) => {
+      setConfirmRevokeInviteId(null);
+      pushToast({ tone: "error", title: "Failed to delete invitation", body: err instanceof Error ? err.message : "Unknown error." });
     },
   });
 
@@ -255,15 +269,47 @@ export function InstanceMembers() {
                     Invited {formatDate(inv.createdAt)} · Expires {formatDate(inv.expiresAt)}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => resendMutation.mutate(inv.id)}
-                  disabled={resendMutation.isPending}
-                  className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                >
-                  <RefreshCw className="h-3 w-3" />
-                  Resend
-                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => resendMutation.mutate(inv.id)}
+                    disabled={resendMutation.isPending || revokeInviteMutation.isPending}
+                    className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Resend
+                  </button>
+                  {confirmRevokeInviteId === inv.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-muted-foreground">Delete?</span>
+                      <button
+                        type="button"
+                        onClick={() => revokeInviteMutation.mutate(inv.id)}
+                        disabled={revokeInviteMutation.isPending}
+                        className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-destructive-foreground disabled:opacity-50"
+                      >
+                        {revokeInviteMutation.isPending ? "Deleting…" : "Confirm"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRevokeInviteId(null)}
+                        className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmRevokeInviteId(inv.id)}
+                      disabled={revokeInviteMutation.isPending}
+                      className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive disabled:opacity-50"
+                      aria-label={`Delete invite for ${inv.email}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

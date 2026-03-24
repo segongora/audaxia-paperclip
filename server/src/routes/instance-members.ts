@@ -387,6 +387,27 @@ export function instanceMembersRoutes(db: Db) {
     },
   );
 
+  /** DELETE /api/instance/members/invite/:inviteId — revoke a pending invitation */
+  router.delete("/instance/members/invite/:inviteId", async (req, res) => {
+    assertAuthenticated(req);
+    const { inviteId } = req.params as { inviteId: string };
+
+    const result = await svc.revokeInvitation(inviteId);
+
+    if (!result.ok) {
+      const messages: Record<string, { status: number; message: string }> = {
+        not_found: { status: 404, message: "Invitation not found." },
+        already_accepted: { status: 409, message: "This invitation has already been accepted." },
+        already_revoked: { status: 409, message: "This invitation has already been revoked." },
+      };
+      const mapped = messages[result.reason] ?? { status: 400, message: result.reason };
+      res.status(mapped.status).json({ error: mapped.message });
+      return;
+    }
+
+    res.json({ ok: true });
+  });
+
   /** DELETE /api/instance/members/:userId — remove a member */
   router.delete("/instance/members/:userId", async (req, res) => {
     const requestingUserId = assertAuthenticated(req);
