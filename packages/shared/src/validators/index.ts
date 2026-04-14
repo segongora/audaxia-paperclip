@@ -7,6 +7,10 @@ export {
   patchInstanceExperimentalSettingsSchema,
   type InstanceExperimentalSettings,
   type PatchInstanceExperimentalSettings,
+  patchInstanceClaudeSubscriptionSchema,
+  patchInstanceClaudeApiKeySchema,
+  type PatchInstanceClaudeSubscription,
+  type PatchInstanceClaudeApiKey,
 } from "./instance.js";
 
 export {

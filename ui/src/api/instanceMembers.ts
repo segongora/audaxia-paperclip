@@ -78,6 +78,9 @@ export const instanceMembersApi = {
   acceptExisting: (payload: AcceptInviteExistingUserPayload) =>
     api.post<AcceptInviteResult>("/instance/members/invite/accept/existing", payload),
 
+  revokeInvite: (inviteId: string) =>
+    api.delete<{ ok: boolean }>(`/instance/members/invite/${inviteId}`),
+
   removeMember: (userId: string) =>
     api.delete<{ ok: boolean }>(`/instance/members/${userId}`),
 };

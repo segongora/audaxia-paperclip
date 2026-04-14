@@ -202,6 +202,10 @@ export type {
   InstanceGeneralSettings,
   InstanceSettings,
   BackupRetentionPolicy,
+  InstanceClaudeCredentialStatus,
+  InstanceClaudeCredentialSource,
+  InstanceClaudeCredentials,
+  InstanceClaudeCredentialsRuntime,
   Agent,
   AgentAccessState,
   AgentChainOfCommandEntry,
@@ -422,6 +426,10 @@ export {
   instanceExperimentalSettingsSchema,
   patchInstanceExperimentalSettingsSchema,
   type PatchInstanceExperimentalSettings,
+  patchInstanceClaudeSubscriptionSchema,
+  type PatchInstanceClaudeSubscription,
+  patchInstanceClaudeApiKeySchema,
+  type PatchInstanceClaudeApiKey,
 } from "./validators/index.js";
 
 export {

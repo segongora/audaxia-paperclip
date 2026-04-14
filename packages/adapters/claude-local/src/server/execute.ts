@@ -29,6 +29,7 @@ import {
   detectClaudeLoginRequired,
   isClaudeMaxTurnsResult,
   isClaudeUnknownSessionError,
+  isClaudeSubscriptionExhausted,
 } from "./parse.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
@@ -468,7 +469,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       : `Claude exited with code ${proc.exitCode ?? -1}`;
   };
 
-  const runAttempt = async (resumeSessionId: string | null) => {
+  const runAttempt = async (resumeSessionId: string | null, envOverride?: Record<string, string>) => {
+    const runEnv = envOverride ?? env;
     const attemptInstructionsFilePath = resumeSessionId ? undefined : effectiveInstructionsFilePath;
     const args = buildClaudeArgs(resumeSessionId, attemptInstructionsFilePath);
     const commandNotes: string[] = [];
@@ -496,7 +498,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
     const proc = await runChildProcess(runId, command, args, {
       cwd,
-      env,
+      env: runEnv,
       stdin: prompt,
       timeoutSec,
       graceSec,
@@ -609,7 +611,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     };
   };
 
+  // Instance-level dual-auth: API key fallback when subscription is exhausted.
+  // The server injects _instanceClaudeApiKey into config when both credentials are set.
+  const instanceApiKey = asString(config._instanceClaudeApiKey, "").trim();
+  const hasDualAuth =
+    instanceApiKey.length > 0 &&
+    !hasNonEmptyEnvValue(env, "ANTHROPIC_API_KEY"); // only activate if agent doesn't already use API key
+
   const initial = await runAttempt(sessionId ?? null);
+
+  // Session-not-found retry (existing logic)
   if (
     sessionId &&
     !initial.proc.timedOut &&
@@ -623,6 +634,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     );
     const retry = await runAttempt(null);
     return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
+  }
+
+  // Dual-auth fallback: subscription exhausted → retry with API key
+  if (hasDualAuth && isClaudeSubscriptionExhausted(initial.parsed)) {
+    await onLog(
+      "stdout",
+      "[paperclip] Subscription credits exhausted — retrying with instance API key.\n",
+    );
+    const fallbackEnv = { ...env, ANTHROPIC_API_KEY: instanceApiKey };
+    const fallbackAttempt = await runAttempt(null, fallbackEnv);
+    const result = toAdapterResult(fallbackAttempt, {
+      fallbackSessionId: null,
+      clearSessionOnMissingSession: true,
+    });
+    return { ...result, credentialFallbackOccurred: true, billingType: "api" };
   }
 
   return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
