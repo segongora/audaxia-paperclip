@@ -65,6 +65,7 @@ export function instanceSettingsService(db: Db) {
         singletonKey: DEFAULT_SINGLETON_KEY,
         general: {},
         experimental: {},
+        credentials: {},
         createdAt: now,
         updatedAt: now,
       })

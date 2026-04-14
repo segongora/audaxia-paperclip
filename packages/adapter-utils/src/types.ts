@@ -84,6 +84,8 @@ export interface AdapterExecutionResult {
   runtimeServices?: AdapterRuntimeServiceReport[];
   summary?: string | null;
   clearSession?: boolean;
+  /** Set to true when the adapter fell back from subscription to API key auth */
+  credentialFallbackOccurred?: boolean;
   question?: {
     prompt: string;
     choices: Array<{

@@ -31,23 +31,41 @@ function generateInviteToken(): string {
   return randomBytes(32).toString("hex");
 }
 
-/** Hash password using scrypt (compatible with Better Auth's credential format) */
+/**
+ * Hash password using scrypt with the exact same parameters as Better Auth:
+ *   N=16384, r=16, p=1, dkLen=64
+ * Salt is stored as a hex string and passed as-is to scrypt (matching Better Auth's behavior).
+ * Password is Unicode-normalized (NFKC) before hashing.
+ */
 async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16);
-  const hash = (await scryptAsync(password, salt, 32, { N: 16384, r: 8, p: 1 })) as Buffer;
-  return `${salt.toString("hex")}:${hash.toString("hex")}`;
+  const saltBytes = randomBytes(16);
+  const saltHex = saltBytes.toString("hex"); // 32-char hex string — same as Better Auth
+  const normalizedPassword = password.normalize("NFKC");
+  const hash = (await scryptAsync(normalizedPassword, saltHex, 64, { N: 16384, r: 16, p: 1 })) as Buffer;
+  return `${saltHex}:${hash.toString("hex")}`;
 }
 
-/** Verify a password against a Better Auth scrypt hash */
+/**
+ * Verify a password against a stored hash.
+ * Tries the current Better Auth-compatible format first (r=16, dkLen=64, hex-string salt, NFKC),
+ * then falls back to the legacy format (r=8, dkLen=32, raw-bytes salt) for accounts created
+ * before this fix was applied.
+ */
 async function verifyPassword(storedHash: string, password: string): Promise<boolean> {
   const parts = storedHash.split(":");
   if (parts.length !== 2) return false;
   const [saltHex, hashHex] = parts as [string, string];
+  const actual = Buffer.from(hashHex, "hex");
   try {
-    const salt = Buffer.from(saltHex, "hex");
-    const expectedHash = (await scryptAsync(password, salt, 32, { N: 16384, r: 8, p: 1 })) as Buffer;
-    const actual = Buffer.from(hashHex, "hex");
-    return actual.length === expectedHash.length && timingSafeEqual(actual, expectedHash);
+    // Current format: matches Better Auth (r=16, dkLen=64, salt as hex string, NFKC)
+    const normalizedPassword = password.normalize("NFKC");
+    const expected = (await scryptAsync(normalizedPassword, saltHex, 64, { N: 16384, r: 16, p: 1 })) as Buffer;
+    if (actual.length === expected.length && timingSafeEqual(actual, expected)) return true;
+
+    // Legacy fallback: old format (r=8, dkLen=32, salt as raw bytes)
+    const saltBuf = Buffer.from(saltHex, "hex");
+    const expectedLegacy = (await scryptAsync(password, saltBuf, 32, { N: 16384, r: 8, p: 1 })) as Buffer;
+    return actual.length === expectedLegacy.length && timingSafeEqual(actual, expectedLegacy);
   } catch {
     return false;
   }
@@ -382,6 +400,35 @@ export function memberInvitationService(db: Db) {
     return { user: { id: user.id, email: user.email, name: user.name }, sessionToken };
   }
 
+  async function revokeInvitation(
+    inviteId: string,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const existing = await db
+      .select()
+      .from(memberInvitations)
+      .where(eq(memberInvitations.id, inviteId))
+      .then((rows) => rows[0] ?? null);
+
+    if (!existing) {
+      return { ok: false, reason: "not_found" };
+    }
+
+    if (existing.acceptedAt) {
+      return { ok: false, reason: "already_accepted" };
+    }
+
+    if (existing.revokedAt) {
+      return { ok: false, reason: "already_revoked" };
+    }
+
+    await db
+      .update(memberInvitations)
+      .set({ revokedAt: new Date(), updatedAt: new Date() })
+      .where(eq(memberInvitations.id, inviteId));
+
+    return { ok: true };
+  }
+
   async function removeMember(
     targetUserId: string,
     requestingUserId: string,
@@ -436,6 +483,7 @@ export function memberInvitationService(db: Db) {
     findUserByEmail,
     createInvitation,
     resendInvitation,
+    revokeInvitation,
     validateToken,
     createUserFromInvite,
     acceptInviteExistingUser,

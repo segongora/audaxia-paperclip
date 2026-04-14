@@ -50,6 +50,7 @@ import {
   resolveExecutionWorkspaceMode,
 } from "./execution-workspace-policy.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import { instanceCredentialsService } from "./instance-credentials.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
 import {
   hasSessionCompactionThresholds,
@@ -721,6 +722,7 @@ function resolveNextSessionState(input: {
 
 export function heartbeatService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
+  const instanceCredentials = instanceCredentialsService(db);
   const getCurrentUserRedactionOptions = async () => ({
     enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
   });
@@ -1950,9 +1952,18 @@ export function heartbeatService(db: Db) {
       mergedConfig,
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
-    const runtimeConfig = {
+    // Inject instance-level Claude credentials for dual-auth fallback (claude_local only)
+    const instanceClaudeCredRuntime = agent.adapterType === "claude_local"
+      ? await instanceCredentials.getForRuntime()
+      : null;
+    const instanceClaudeApiKeyForRuntime =
+      instanceClaudeCredRuntime?.apiKeyEnabled && instanceClaudeCredRuntime?.apiKey
+        ? instanceClaudeCredRuntime.apiKey
+        : null;
+    const runtimeConfig: Record<string, unknown> = {
       ...resolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
+      ...(instanceClaudeApiKeyForRuntime ? { _instanceClaudeApiKey: instanceClaudeApiKeyForRuntime } : {}),
     };
     const issueRef = issueContext
       ? {
@@ -2400,6 +2411,24 @@ export function heartbeatService(db: Db) {
         },
         authToken: authToken ?? undefined,
       });
+
+      // Publish live event + record fallback when subscription credits were exhausted
+      if (adapterResult.credentialFallbackOccurred) {
+        try {
+          await instanceCredentials.recordFallback();
+          const companyIds = await instanceSettings.listCompanyIds();
+          for (const companyId of companyIds) {
+            publishLiveEvent({
+              companyId,
+              type: "instance.claude.credential_fallback",
+              payload: { runId: run.id, agentId: agent.id, occurredAt: new Date().toISOString() },
+            });
+          }
+        } catch {
+          // non-critical — don't fail the run
+        }
+      }
+
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({
             db,

@@ -1,5 +1,15 @@
 export type { Company } from "./company.js";
-export type { InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings } from "./instance.js";
+export type {
+  InstanceExperimentalSettings,
+  InstanceGeneralSettings,
+  InstanceSettings,
+  InstanceClaudeCredentialStatus,
+  InstanceClaudeCredentialSource,
+  InstanceClaudeCredentials,
+  InstanceClaudeCredentialsRuntime,
+  PatchInstanceClaudeSubscription,
+  PatchInstanceClaudeApiKey,
+} from "./instance.js";
 export type {
   CompanySkillSourceType,
   CompanySkillTrustLevel,
