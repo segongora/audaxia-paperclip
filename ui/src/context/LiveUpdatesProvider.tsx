@@ -515,6 +515,19 @@ function handleLiveEvent(
       buildJoinRequestToast(payload);
     if (toast) gatedPushToast(gate, pushToast, `activity:${action ?? "unknown"}`, toast);
   }
+
+  if (event.type === "instance.claude.credential_fallback") {
+    // Invalidate credentials so the fallback banner shows on the settings page
+    queryClient.invalidateQueries({ queryKey: ["instance", "claude-credentials"] });
+    gatedPushToast(gate, pushToast, "claude-fallback", {
+      id: "claude-credential-fallback",
+      dedupeKey: "claude-credential-fallback",
+      title: "Subscription credits exhausted",
+      body: "Claude requests are now using your API key.",
+      tone: "warn",
+      ttlMs: 12000,
+    });
+  }
 }
 
 export const __liveUpdatesTestUtils = {

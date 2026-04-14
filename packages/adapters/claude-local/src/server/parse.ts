@@ -167,6 +167,18 @@ export function isClaudeMaxTurnsResult(parsed: Record<string, unknown> | null | 
   return /max(?:imum)?\s+turns?/i.test(resultText);
 }
 
+/**
+ * Detect subscription credit exhaustion per PRD FR-3:
+ * is_error: true AND result contains "You've hit your limit"
+ */
+export function isClaudeSubscriptionExhausted(parsed: Record<string, unknown> | null): boolean {
+  if (!parsed) return false;
+  const isError = parsed.is_error === true;
+  if (!isError) return false;
+  const resultText = asString(parsed.result, "").toLowerCase();
+  return resultText.includes("you've hit your limit") || resultText.includes("you have hit your limit");
+}
+
 export function isClaudeUnknownSessionError(parsed: Record<string, unknown>): boolean {
   const resultText = asString(parsed.result, "").trim();
   const allMessages = [resultText, ...extractClaudeErrorMessages(parsed)]

@@ -317,6 +317,7 @@ export const LIVE_EVENT_TYPES = [
   "plugin.ui.updated",
   "plugin.worker.crashed",
   "plugin.worker.restarted",
+  "instance.claude.credential_fallback",
 ] as const;
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
 

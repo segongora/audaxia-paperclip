@@ -32,6 +32,7 @@ import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceSettings } from "./pages/InstanceSettings";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
 import { InstanceMembers } from "./pages/InstanceMembers";
+import { InstanceClaudeCredentials } from "./pages/InstanceClaudeCredentials";
 import { AcceptInvitePage } from "./pages/AcceptInvite";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
@@ -317,6 +318,7 @@ export function App() {
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="members" element={<InstanceMembers />} />
+            <Route path="claude-credentials" element={<InstanceClaudeCredentials />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />
             <Route path="plugins" element={<PluginManager />} />
