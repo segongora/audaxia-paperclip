@@ -39,8 +39,12 @@ import {
   issues,
   projectWorkspaces,
   projects,
+  routines,
+  routineTriggers,
   runDatabaseBackup,
   runDatabaseRestore,
+  createEmbeddedPostgresLogBuffer,
+  formatEmbeddedPostgresError,
 } from "@paperclipai/db";
 import type { Command } from "commander";
 import { ensureAgentJwtSecret, loadPaperclipEnvFile, mergePaperclipEnvEntries, readPaperclipEnvEntries, resolvePaperclipEnvFile } from "../config/env.js";
@@ -78,6 +82,7 @@ import {
 
 type WorktreeInitOptions = {
   name?: string;
+  color?: string;
   instance?: string;
   home?: string;
   fromConfig?: string;
@@ -112,6 +117,28 @@ type WorktreeMergeHistoryOptions = {
   apply?: boolean;
   dry?: boolean;
   yes?: boolean;
+};
+
+type WorktreeReseedOptions = {
+  from?: string;
+  to?: string;
+  fromConfig?: string;
+  fromDataDir?: string;
+  fromInstance?: string;
+  seedMode?: string;
+  yes?: boolean;
+  allowLiveTarget?: boolean;
+};
+
+type WorktreeRepairOptions = {
+  branch?: string;
+  home?: string;
+  fromConfig?: string;
+  fromDataDir?: string;
+  fromInstance?: string;
+  seedMode?: string;
+  noSeed?: boolean;
+  allowLiveTarget?: boolean;
 };
 
 type EmbeddedPostgresInstance = {
@@ -465,6 +492,62 @@ async function findAvailablePort(preferredPort: number, reserved = new Set<numbe
   return port;
 }
 
+function resolveRepoManagedWorktreesRoot(cwd: string): string | null {
+  const normalized = path.resolve(cwd);
+  const marker = `${path.sep}.paperclip${path.sep}worktrees${path.sep}`;
+  const index = normalized.indexOf(marker);
+  if (index === -1) return null;
+  const repoRoot = normalized.slice(0, index);
+  return path.resolve(repoRoot, ".paperclip", "worktrees");
+}
+
+function collectClaimedWorktreePorts(homeDir: string, currentInstanceId: string, cwd: string): {
+  serverPorts: Set<number>;
+  databasePorts: Set<number>;
+} {
+  const serverPorts = new Set<number>();
+  const databasePorts = new Set<number>();
+  const configPaths = new Set<string>();
+  const instancesDir = path.resolve(homeDir, "instances");
+  if (existsSync(instancesDir)) {
+    for (const entry of readdirSync(instancesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === currentInstanceId) continue;
+
+      const configPath = path.resolve(instancesDir, entry.name, "config.json");
+      if (existsSync(configPath)) {
+        configPaths.add(configPath);
+      }
+    }
+  }
+
+  const repoManagedWorktreesRoot = resolveRepoManagedWorktreesRoot(cwd);
+  if (repoManagedWorktreesRoot && existsSync(repoManagedWorktreesRoot)) {
+    for (const entry of readdirSync(repoManagedWorktreesRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const configPath = path.resolve(repoManagedWorktreesRoot, entry.name, ".paperclip", "config.json");
+      if (existsSync(configPath)) {
+        configPaths.add(configPath);
+      }
+    }
+  }
+
+  for (const configPath of configPaths) {
+    try {
+      const config = readConfig(configPath);
+      if (config?.server.port) {
+        serverPorts.add(config.server.port);
+      }
+      if (config?.database.mode === "embedded-postgres") {
+        databasePorts.add(config.database.embeddedPostgresPort);
+      }
+    } catch {
+      // Ignore malformed sibling configs.
+    }
+  }
+
+  return { serverPorts, databasePorts };
+}
+
 function detectGitBranchName(cwd: string): string | null {
   try {
     const value = execFileSync("git", ["branch", "--show-current"], {
@@ -476,6 +559,46 @@ function detectGitBranchName(cwd: string): string | null {
   } catch {
     return null;
   }
+}
+
+function validateGitBranchName(cwd: string, branchName: string): string {
+  const value = nonEmpty(branchName);
+  if (!value) {
+    throw new Error("Branch name is required.");
+  }
+  try {
+    execFileSync("git", ["check-ref-format", "--branch", value], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    throw new Error(`Invalid branch name "${branchName}": ${extractExecSyncErrorMessage(error) ?? String(error)}`);
+  }
+  return value;
+}
+
+function isPrimaryGitWorktree(cwd: string): boolean {
+  const workspace = detectGitWorkspaceInfo(cwd);
+  return Boolean(workspace && workspace.gitDir === workspace.commonDir);
+}
+
+function resolvePrimaryGitRepoRoot(cwd: string): string {
+  const workspace = detectGitWorkspaceInfo(cwd);
+  if (!workspace) {
+    throw new Error("Current directory is not inside a git repository.");
+  }
+  if (workspace.gitDir === workspace.commonDir) {
+    return workspace.root;
+  }
+  return path.resolve(workspace.commonDir, "..");
+}
+
+function resolveRepairWorktreeDirName(branchName: string): string {
+  const normalized = branchName.trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-._]+|[-._]+$/g, "");
+  return normalized || "worktree";
 }
 
 function detectGitWorkspaceInfo(cwd: string): GitWorkspaceInfo | null {
@@ -663,6 +786,179 @@ export function resolveSourceConfigPath(opts: WorktreeInitOptions): string {
   return path.resolve(sourceHome, "instances", sourceInstanceId, "config.json");
 }
 
+export function resolveWorktreeReseedSource(input: WorktreeReseedOptions): ResolvedWorktreeReseedSource {
+  const fromSelector = nonEmpty(input.from);
+  const fromConfig = nonEmpty(input.fromConfig);
+  const fromDataDir = nonEmpty(input.fromDataDir);
+  const fromInstance = nonEmpty(input.fromInstance);
+  const hasExplicitConfigSource = Boolean(fromConfig || fromDataDir || fromInstance);
+
+  if (fromSelector && hasExplicitConfigSource) {
+    throw new Error(
+      "Use either --from <worktree> or --from-config/--from-data-dir/--from-instance, not both.",
+    );
+  }
+
+  if (fromSelector) {
+    const endpoint = resolveWorktreeEndpointFromSelector(fromSelector, { allowCurrent: true });
+    return {
+      configPath: endpoint.configPath,
+      label: endpoint.label,
+    };
+  }
+
+  if (hasExplicitConfigSource) {
+    const configPath = resolveSourceConfigPath({
+      fromConfig: fromConfig ?? undefined,
+      fromDataDir: fromDataDir ?? undefined,
+      fromInstance: fromInstance ?? undefined,
+    });
+    return {
+      configPath,
+      label: configPath,
+    };
+  }
+
+  throw new Error(
+    "Pass --from <worktree> or --from-config/--from-instance explicitly so the reseed source is unambiguous.",
+  );
+}
+
+function resolveWorktreeRepairSource(input: WorktreeRepairOptions): ResolvedWorktreeReseedSource {
+  const fromConfig = nonEmpty(input.fromConfig);
+  const fromDataDir = nonEmpty(input.fromDataDir);
+  const fromInstance = nonEmpty(input.fromInstance) ?? "default";
+  const configPath = resolveSourceConfigPath({
+    fromConfig: fromConfig ?? undefined,
+    fromDataDir: fromDataDir ?? undefined,
+    fromInstance,
+  });
+  return {
+    configPath,
+    label: configPath,
+  };
+}
+
+export function resolveWorktreeReseedTargetPaths(input: {
+  configPath: string;
+  rootPath: string;
+}): WorktreeLocalPaths {
+  const envEntries = readPaperclipEnvEntries(resolvePaperclipEnvFile(input.configPath));
+  const homeDir = nonEmpty(envEntries.PAPERCLIP_HOME);
+  const instanceId = nonEmpty(envEntries.PAPERCLIP_INSTANCE_ID);
+
+  if (!homeDir || !instanceId) {
+    throw new Error(
+      `Target config ${input.configPath} does not look like a worktree-local Paperclip instance. Expected PAPERCLIP_HOME and PAPERCLIP_INSTANCE_ID in the adjacent .env.`,
+    );
+  }
+
+  return resolveWorktreeLocalPaths({
+    cwd: input.rootPath,
+    homeDir,
+    instanceId,
+  });
+}
+
+function resolveExistingGitWorktree(selector: string, cwd: string): MergeSourceChoice | null {
+  const trimmed = selector.trim();
+  if (trimmed.length === 0) return null;
+
+  const directPath = path.resolve(trimmed);
+  if (existsSync(directPath)) {
+    return {
+      worktree: directPath,
+      branch: null,
+      branchLabel: path.basename(directPath),
+      hasPaperclipConfig: existsSync(path.resolve(directPath, ".paperclip", "config.json")),
+      isCurrent: directPath === path.resolve(cwd),
+    };
+  }
+
+  return toMergeSourceChoices(cwd).find((choice) =>
+    choice.worktree === directPath
+    || path.basename(choice.worktree) === trimmed
+    || choice.branchLabel === trimmed
+    || choice.branch === trimmed,
+  ) ?? null;
+}
+
+async function ensureRepairTargetWorktree(input: {
+  selector?: string;
+  seedMode: WorktreeSeedMode;
+  opts: WorktreeRepairOptions;
+}): Promise<ResolvedWorktreeRepairTarget | null> {
+  const cwd = process.cwd();
+  const currentRoot = path.resolve(cwd);
+  const currentConfigPath = path.resolve(currentRoot, ".paperclip", "config.json");
+
+  if (!input.selector) {
+    if (isPrimaryGitWorktree(cwd)) {
+      return null;
+    }
+    return {
+      rootPath: currentRoot,
+      configPath: currentConfigPath,
+      label: path.basename(currentRoot),
+      branchName: detectGitBranchName(cwd),
+      created: false,
+    };
+  }
+
+  const existing = resolveExistingGitWorktree(input.selector, cwd);
+  if (existing) {
+    return {
+      rootPath: existing.worktree,
+      configPath: path.resolve(existing.worktree, ".paperclip", "config.json"),
+      label: existing.branchLabel,
+      branchName: existing.branchLabel === "(detached)" ? null : existing.branchLabel,
+      created: false,
+    };
+  }
+
+  const repoRoot = resolvePrimaryGitRepoRoot(cwd);
+  const branchName = validateGitBranchName(repoRoot, input.selector);
+  const targetPath = path.resolve(
+    repoRoot,
+    ".paperclip",
+    "worktrees",
+    resolveRepairWorktreeDirName(branchName),
+  );
+
+  if (existsSync(targetPath)) {
+    throw new Error(`Target path already exists but is not a registered git worktree: ${targetPath}`);
+  }
+
+  mkdirSync(path.dirname(targetPath), { recursive: true });
+
+  const spinner = p.spinner();
+  spinner.start(`Creating git worktree for ${branchName}...`);
+  try {
+    execFileSync("git", resolveGitWorktreeAddArgs({
+      branchName,
+      targetPath,
+      branchExists: localBranchExists(repoRoot, branchName),
+    }), {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    spinner.stop(`Created git worktree at ${targetPath}.`);
+  } catch (error) {
+    spinner.stop(pc.red("Failed to create git worktree."));
+    throw new Error(extractExecSyncErrorMessage(error) ?? String(error));
+  }
+
+  installDependenciesBestEffort(targetPath);
+
+  return {
+    rootPath: targetPath,
+    configPath: path.resolve(targetPath, ".paperclip", "config.json"),
+    label: branchName,
+    branchName,
+    created: true,
+  };
+}
+
 function resolveSourceConnectionString(config: PaperclipConfig, envEntries: Record<string, string>, portOverride?: number): string {
   if (config.database.mode === "postgres") {
     const connectionString = nonEmpty(envEntries.DATABASE_URL) ?? nonEmpty(config.database.connectionString);
@@ -750,24 +1046,39 @@ async function ensureEmbeddedPostgres(dataDir: string, preferredPort: number): P
   }
 
   const port = await findAvailablePort(preferredPort);
+  const logBuffer = createEmbeddedPostgresLogBuffer();
   const instance = new EmbeddedPostgres({
     databaseDir: dataDir,
     user: "paperclip",
     password: "paperclip",
     port,
     persistent: true,
-    initdbFlags: ["--encoding=UTF8", "--locale=C"],
-    onLog: () => {},
-    onError: () => {},
+    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+    onLog: logBuffer.append,
+    onError: logBuffer.append,
   });
 
   if (!existsSync(path.resolve(dataDir, "PG_VERSION"))) {
-    await instance.initialise();
+    try {
+      await instance.initialise();
+    } catch (error) {
+      throw formatEmbeddedPostgresError(error, {
+        fallbackMessage: `Failed to initialize embedded PostgreSQL cluster in ${dataDir} on port ${port}`,
+        recentLogs: logBuffer.getRecentLogs(),
+      });
+    }
   }
   if (existsSync(postmasterPidFile)) {
     rmSync(postmasterPidFile, { force: true });
   }
-  await instance.start();
+  try {
+    await instance.start();
+  } catch (error) {
+    throw formatEmbeddedPostgresError(error, {
+      fallbackMessage: `Failed to start embedded PostgreSQL on port ${port}`,
+      recentLogs: logBuffer.getRecentLogs(),
+    });
+  }
 
   return {
     port,
@@ -776,6 +1087,36 @@ async function ensureEmbeddedPostgres(dataDir: string, preferredPort: number): P
       await instance.stop();
     },
   };
+}
+
+export async function pauseSeededScheduledRoutines(connectionString: string): Promise<number> {
+  const db = createDb(connectionString);
+  try {
+    const scheduledRoutineIds = await db
+      .selectDistinct({ routineId: routineTriggers.routineId })
+      .from(routineTriggers)
+      .where(and(eq(routineTriggers.kind, "schedule"), eq(routineTriggers.enabled, true)));
+    const idsToPause = scheduledRoutineIds
+      .map((row) => row.routineId)
+      .filter((value): value is string => Boolean(value));
+
+    if (idsToPause.length === 0) {
+      return 0;
+    }
+
+    const paused = await db
+      .update(routines)
+      .set({
+        status: "paused",
+        updatedAt: new Date(),
+      })
+      .where(and(inArray(routines.id, idsToPause), sql`${routines.status} <> 'paused'`, sql`${routines.status} <> 'archived'`))
+      .returning({ id: routines.id });
+
+    return paused.length;
+  } finally {
+    await db.$client?.end?.({ timeout: 5 }).catch(() => undefined);
+  }
 }
 
 async function seedWorktreeDatabase(input: {
@@ -804,6 +1145,8 @@ async function seedWorktreeDatabase(input: {
         input.sourceConfig.database.embeddedPostgresDataDir,
         input.sourceConfig.database.embeddedPostgresPort,
       );
+      const sourceAdminConnectionString = `postgres://paperclip:paperclip@127.0.0.1:${sourceHandle.port}/postgres`;
+      await ensurePostgresDatabase(sourceAdminConnectionString, "paperclip");
     }
     const sourceConnectionString = resolveSourceConnectionString(
       input.sourceConfig,
@@ -813,7 +1156,7 @@ async function seedWorktreeDatabase(input: {
     const backup = await runDatabaseBackup({
       connectionString: sourceConnectionString,
       backupDir: path.resolve(input.targetPaths.backupDir, "seed"),
-      retentionDays: 7,
+      retention: { dailyDays: 7, weeklyWeeks: 4, monthlyMonths: 1 },
       filenamePrefix: `${input.instanceId}-seed`,
       includeMigrationJournal: true,
       excludeTables: seedPlan.excludedTables,
@@ -833,6 +1176,7 @@ async function seedWorktreeDatabase(input: {
       backupFile: backup.backupFile,
     });
     await applyPendingMigrations(targetConnectionString);
+    await pauseSeededScheduledRoutines(targetConnectionString);
     const reboundWorkspaces = await rebindSeededProjectWorkspaces({
       targetConnectionString,
       currentCwd: input.targetPaths.cwd,
@@ -869,8 +1213,8 @@ async function runWorktreeInit(opts: WorktreeInitOptions): Promise<void> {
     instanceId,
   });
   const branding = {
-    name: worktreeName,
-    color: generateWorktreeColor(),
+    name: opts.name ?? worktreeName,
+    color: opts.color ?? generateWorktreeColor(),
   };
   const sourceConfigPath = resolveSourceConfigPath(opts);
   const sourceConfig = existsSync(sourceConfigPath) ? readConfig(sourceConfigPath) : null;
@@ -886,10 +1230,14 @@ async function runWorktreeInit(opts: WorktreeInitOptions): Promise<void> {
     rmSync(paths.instanceRoot, { recursive: true, force: true });
   }
 
+  const claimedPorts = collectClaimedWorktreePorts(paths.homeDir, paths.instanceId, paths.cwd);
   const preferredServerPort = opts.serverPort ?? ((sourceConfig?.server.port ?? 3100) + 1);
-  const serverPort = await findAvailablePort(preferredServerPort);
+  const serverPort = await findAvailablePort(preferredServerPort, claimedPorts.serverPorts);
   const preferredDbPort = opts.dbPort ?? ((sourceConfig?.database.embeddedPostgresPort ?? 54329) + 1);
-  const databasePort = await findAvailablePort(preferredDbPort, new Set([serverPort]));
+  const databasePort = await findAvailablePort(
+    preferredDbPort,
+    new Set([...claimedPorts.databasePorts, serverPort]),
+  );
   const targetConfig = buildWorktreeConfig({
     sourceConfig,
     paths,
@@ -1022,18 +1370,7 @@ export async function worktreeMakeCommand(nameArg: string, opts: WorktreeMakeOpt
     throw new Error(extractExecSyncErrorMessage(error) ?? String(error));
   }
 
-  const installSpinner = p.spinner();
-  installSpinner.start("Installing dependencies...");
-  try {
-    execFileSync("pnpm", ["install"], {
-      cwd: targetPath,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    installSpinner.stop("Installed dependencies.");
-  } catch (error) {
-    installSpinner.stop(pc.yellow("Failed to install dependencies (continuing anyway)."));
-    p.log.warning(extractExecSyncErrorMessage(error) ?? String(error));
-  }
+  installDependenciesBestEffort(targetPath);
 
   const originalCwd = process.cwd();
   try {
@@ -1047,6 +1384,21 @@ export async function worktreeMakeCommand(nameArg: string, opts: WorktreeMakeOpt
     throw error;
   } finally {
     process.chdir(originalCwd);
+  }
+}
+
+function installDependenciesBestEffort(targetPath: string): void {
+  const installSpinner = p.spinner();
+  installSpinner.start("Installing dependencies...");
+  try {
+    execFileSync("pnpm", ["install"], {
+      cwd: targetPath,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    installSpinner.stop("Installed dependencies.");
+  } catch (error) {
+    installSpinner.stop(pc.yellow("Failed to install dependencies (continuing anyway)."));
+    p.log.warning(extractExecSyncErrorMessage(error) ?? String(error));
   }
 }
 
@@ -1076,6 +1428,19 @@ type ResolvedWorktreeEndpoint = {
   configPath: string;
   label: string;
   isCurrent: boolean;
+};
+
+type ResolvedWorktreeReseedSource = {
+  configPath: string;
+  label: string;
+};
+
+type ResolvedWorktreeRepairTarget = {
+  rootPath: string;
+  configPath: string;
+  label: string;
+  branchName: string | null;
+  created: boolean;
 };
 
 function parseGitWorktreeList(cwd: string): GitWorktreeListEntry[] {
@@ -1569,6 +1934,13 @@ function renderMergePlan(plan: Awaited<ReturnType<typeof collectMergePlan>>["pla
   lines.push("Identifiers shown above are provisional preview values. `--apply` reserves fresh issue numbers at write time.");
 
   return lines.join("\n");
+}
+
+function resolveRunningEmbeddedPostgresPid(config: PaperclipConfig): number | null {
+  if (config.database.mode !== "embedded-postgres") {
+    return null;
+  }
+  return readRunningPostmasterPid(path.resolve(config.database.embeddedPostgresDataDir, "postmaster.pid"));
 }
 
 async function collectMergePlan(input: {
@@ -2512,6 +2884,176 @@ export async function worktreeMergeHistoryCommand(sourceArg: string | undefined,
   }
 }
 
+async function runWorktreeReseed(opts: WorktreeReseedOptions): Promise<void> {
+  const seedMode = opts.seedMode ?? "full";
+  if (!isWorktreeSeedMode(seedMode)) {
+    throw new Error(`Unsupported seed mode "${seedMode}". Expected one of: minimal, full.`);
+  }
+
+  const targetEndpoint = opts.to
+    ? resolveWorktreeEndpointFromSelector(opts.to, { allowCurrent: true })
+    : resolveCurrentEndpoint();
+  const source = resolveWorktreeReseedSource(opts);
+
+  if (path.resolve(source.configPath) === path.resolve(targetEndpoint.configPath)) {
+    throw new Error("Source and target Paperclip configs are the same. Choose different --from/--to values.");
+  }
+  if (!existsSync(source.configPath)) {
+    throw new Error(`Source config not found at ${source.configPath}.`);
+  }
+
+  const targetConfig = readConfig(targetEndpoint.configPath);
+  if (!targetConfig) {
+    throw new Error(`Target config not found at ${targetEndpoint.configPath}.`);
+  }
+  const sourceConfig = readConfig(source.configPath);
+  if (!sourceConfig) {
+    throw new Error(`Source config not found at ${source.configPath}.`);
+  }
+
+  const targetPaths = resolveWorktreeReseedTargetPaths({
+    configPath: targetEndpoint.configPath,
+    rootPath: targetEndpoint.rootPath,
+  });
+  const runningTargetPid = resolveRunningEmbeddedPostgresPid(targetConfig);
+  if (runningTargetPid && !opts.allowLiveTarget) {
+    throw new Error(
+      `Target worktree database appears to be running (pid ${runningTargetPid}). Stop Paperclip in ${targetEndpoint.rootPath} before reseeding, or re-run with --allow-live-target if you want to override this guard.`,
+    );
+  }
+
+  const confirmed = opts.yes
+    ? true
+    : await p.confirm({
+      message: `Overwrite the isolated Paperclip DB for ${targetEndpoint.label} from ${source.label} using ${seedMode} seed mode?`,
+      initialValue: false,
+    });
+  if (p.isCancel(confirmed) || !confirmed) {
+    p.log.warn("Reseed cancelled.");
+    return;
+  }
+
+  if (runningTargetPid && opts.allowLiveTarget) {
+    p.log.warning(`Proceeding even though the target embedded PostgreSQL appears to be running (pid ${runningTargetPid}).`);
+  }
+
+  const spinner = p.spinner();
+  spinner.start(`Reseeding ${targetEndpoint.label} from ${source.label} (${seedMode})...`);
+  try {
+    const seeded = await seedWorktreeDatabase({
+      sourceConfigPath: source.configPath,
+      sourceConfig,
+      targetConfig,
+      targetPaths,
+      instanceId: targetPaths.instanceId,
+      seedMode,
+    });
+    spinner.stop(`Reseeded ${targetEndpoint.label} (${seedMode}).`);
+    p.log.message(pc.dim(`Source: ${source.configPath}`));
+    p.log.message(pc.dim(`Target: ${targetEndpoint.configPath}`));
+    p.log.message(pc.dim(`Seed snapshot: ${seeded.backupSummary}`));
+    for (const rebound of seeded.reboundWorkspaces) {
+      p.log.message(
+        pc.dim(`Rebound workspace ${rebound.name}: ${rebound.fromCwd} -> ${rebound.toCwd}`),
+      );
+    }
+    p.outro(pc.green(`Reseed complete for ${targetEndpoint.label}.`));
+  } catch (error) {
+    spinner.stop(pc.red("Failed to reseed worktree database."));
+    throw error;
+  }
+}
+
+export async function worktreeReseedCommand(opts: WorktreeReseedOptions): Promise<void> {
+  printPaperclipCliBanner();
+  p.intro(pc.bgCyan(pc.black(" paperclipai worktree reseed ")));
+  await runWorktreeReseed(opts);
+}
+
+export async function worktreeRepairCommand(opts: WorktreeRepairOptions): Promise<void> {
+  printPaperclipCliBanner();
+  p.intro(pc.bgCyan(pc.black(" paperclipai worktree repair ")));
+
+  const seedMode = opts.seedMode ?? "minimal";
+  if (!isWorktreeSeedMode(seedMode)) {
+    throw new Error(`Unsupported seed mode "${seedMode}". Expected one of: minimal, full.`);
+  }
+
+  const target = await ensureRepairTargetWorktree({
+    selector: nonEmpty(opts.branch) ?? undefined,
+    seedMode,
+    opts,
+  });
+  if (!target) {
+    p.log.warn("Current checkout is the primary repo worktree. Pass --branch to create or repair a linked worktree.");
+    p.outro(pc.yellow("No worktree repaired."));
+    return;
+  }
+
+  const source = resolveWorktreeRepairSource(opts);
+  if (!existsSync(source.configPath)) {
+    throw new Error(`Source config not found at ${source.configPath}.`);
+  }
+  if (path.resolve(source.configPath) === path.resolve(target.configPath)) {
+    throw new Error("Source and target Paperclip configs are the same. Use --from-config/--from-instance to point repair at a different source.");
+  }
+
+  const targetConfig = existsSync(target.configPath) ? readConfig(target.configPath) : null;
+  const targetEnvEntries = readPaperclipEnvEntries(resolvePaperclipEnvFile(target.configPath));
+  const targetHasWorktreeEnv = Boolean(
+    nonEmpty(targetEnvEntries.PAPERCLIP_HOME) && nonEmpty(targetEnvEntries.PAPERCLIP_INSTANCE_ID),
+  );
+
+  if (targetConfig && targetHasWorktreeEnv && opts.noSeed) {
+    p.log.message(pc.dim(`Target ${target.label} already has worktree-local config/env. Skipping reseed because --no-seed was passed.`));
+    p.outro(pc.green(`Worktree metadata already looks healthy for ${target.label}.`));
+    return;
+  }
+
+  if (targetConfig && targetHasWorktreeEnv) {
+    await runWorktreeReseed({
+      fromConfig: source.configPath,
+      to: target.rootPath,
+      seedMode,
+      yes: true,
+      allowLiveTarget: opts.allowLiveTarget,
+    });
+    return;
+  }
+
+  const repairInstanceId = sanitizeWorktreeInstanceId(path.basename(target.rootPath));
+  const repairPaths = resolveWorktreeLocalPaths({
+    cwd: target.rootPath,
+    homeDir: resolveWorktreeHome(opts.home),
+    instanceId: repairInstanceId,
+  });
+  const runningTargetPid = readRunningPostmasterPid(path.resolve(repairPaths.embeddedPostgresDataDir, "postmaster.pid"));
+  if (runningTargetPid && !opts.allowLiveTarget) {
+    throw new Error(
+      `Target worktree database appears to be running (pid ${runningTargetPid}). Stop Paperclip in ${target.rootPath} before repairing, or re-run with --allow-live-target if you want to override this guard.`,
+    );
+  }
+  if (runningTargetPid && opts.allowLiveTarget) {
+    p.log.warning(`Proceeding even though the target embedded PostgreSQL appears to be running (pid ${runningTargetPid}).`);
+  }
+
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(target.rootPath);
+    await runWorktreeInit({
+      home: opts.home,
+      fromConfig: source.configPath,
+      fromDataDir: opts.fromDataDir,
+      fromInstance: opts.fromInstance,
+      seed: opts.noSeed ? false : true,
+      seedMode,
+      force: true,
+    });
+  } finally {
+    process.chdir(originalCwd);
+  }
+}
+
 export function registerWorktreeCommands(program: Command): void {
   const worktree = program.command("worktree").description("Worktree-local Paperclip instance helpers");
 
@@ -2573,6 +3115,32 @@ export function registerWorktreeCommands(program: Command): void {
     .option("--dry", "Preview only and do not import anything", false)
     .option("--yes", "Skip the interactive confirmation prompt when applying", false)
     .action(worktreeMergeHistoryCommand);
+
+  worktree
+    .command("reseed")
+    .description("Re-seed an existing worktree-local instance from another Paperclip instance or worktree")
+    .option("--from <worktree>", "Source worktree path, directory name, branch name, or current")
+    .option("--to <worktree>", "Target worktree path, directory name, branch name, or current (defaults to current)")
+    .option("--from-config <path>", "Source config.json to seed from")
+    .option("--from-data-dir <path>", "Source PAPERCLIP_HOME used when deriving the source config")
+    .option("--from-instance <id>", "Source instance id when deriving the source config")
+    .option("--seed-mode <mode>", "Seed profile: minimal or full (default: full)", "full")
+    .option("--yes", "Skip the destructive confirmation prompt", false)
+    .option("--allow-live-target", "Override the guard that requires the target worktree DB to be stopped first", false)
+    .action(worktreeReseedCommand);
+
+  worktree
+    .command("repair")
+    .description("Create or repair a linked worktree-local Paperclip instance without touching the primary checkout")
+    .option("--branch <name>", "Existing branch/worktree selector to repair, or a branch name to create under .paperclip/worktrees")
+    .option("--home <path>", `Home root for worktree instances (env: PAPERCLIP_WORKTREES_DIR, default: ${DEFAULT_WORKTREE_HOME})`)
+    .option("--from-config <path>", "Source config.json to seed from")
+    .option("--from-data-dir <path>", "Source PAPERCLIP_HOME used when deriving the source config")
+    .option("--from-instance <id>", "Source instance id when deriving the source config (default: default)")
+    .option("--seed-mode <mode>", "Seed profile: minimal or full (default: minimal)", "minimal")
+    .option("--no-seed", "Repair metadata only and skip reseeding when bootstrapping a missing worktree config", false)
+    .option("--allow-live-target", "Override the guard that requires the target worktree DB to be stopped first", false)
+    .action(worktreeRepairCommand);
 
   program
     .command("worktree:cleanup")
