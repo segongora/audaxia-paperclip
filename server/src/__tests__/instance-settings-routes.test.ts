@@ -8,17 +8,30 @@ const mockInstanceSettingsService = vi.hoisted(() => ({
   updateGeneral: vi.fn(),
   updateExperimental: vi.fn(),
   listCompanyIds: vi.fn(),
+  get: vi.fn(),
+}));
+const mockInstanceCredentialsService = vi.hoisted(() => ({
+  get: vi.fn(),
+  getForRuntime: vi.fn(),
+  updateSubscription: vi.fn(),
+  updateApiKey: vi.fn(),
+  updateTestResult: vi.fn(),
+  maybeImportFromEnv: vi.fn(),
+  recordFallback: vi.fn(),
+  isFallbackActive: vi.fn(),
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   instanceSettingsService: () => mockInstanceSettingsService,
+  instanceCredentialsService: () => mockInstanceCredentialsService,
   logActivity: mockLogActivity,
 }));
 
 function registerModuleMocks() {
   vi.doMock("../services/index.js", () => ({
     instanceSettingsService: () => mockInstanceSettingsService,
+    instanceCredentialsService: () => mockInstanceCredentialsService,
     logActivity: mockLogActivity,
   }));
 }
@@ -52,6 +65,7 @@ describe("instance settings routes", () => {
     mockInstanceSettingsService.updateGeneral.mockReset();
     mockInstanceSettingsService.updateExperimental.mockReset();
     mockInstanceSettingsService.listCompanyIds.mockReset();
+    mockInstanceSettingsService.get.mockReset();
     mockLogActivity.mockReset();
     mockInstanceSettingsService.getGeneral.mockResolvedValue({
       censorUsernameInLogs: false,
@@ -78,6 +92,31 @@ describe("instance settings routes", () => {
       },
     });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1", "company-2"]);
+    mockInstanceSettingsService.get.mockResolvedValue({ id: "settings-1" });
+
+    // Reset credential mocks
+    Object.values(mockInstanceCredentialsService).forEach(fn => (fn as ReturnType<typeof vi.fn>).mockReset());
+
+    // Default credential mock values
+    mockInstanceCredentialsService.get.mockResolvedValue({
+      subscription: { configured: false, enabled: true, maskedValue: null, status: "unconfigured", lastTestedAt: null, lastTestError: null },
+      apiKey: { configured: false, enabled: true, maskedValue: null, status: "unconfigured", lastTestedAt: null, lastTestError: null },
+      lastFallbackAt: null,
+    });
+    mockInstanceCredentialsService.maybeImportFromEnv.mockResolvedValue({ imported: false, token: null });
+    mockInstanceCredentialsService.updateSubscription.mockResolvedValue({
+      subscription: { configured: true, enabled: true, maskedValue: "sk-ant-...XXXX", status: "configured", lastTestedAt: null, lastTestError: null },
+      apiKey: { configured: false, enabled: true, maskedValue: null, status: "unconfigured", lastTestedAt: null, lastTestError: null },
+      lastFallbackAt: null,
+    });
+    mockInstanceCredentialsService.updateApiKey.mockResolvedValue({
+      subscription: { configured: false, enabled: true, maskedValue: null, status: "unconfigured", lastTestedAt: null, lastTestError: null },
+      apiKey: { configured: true, enabled: true, maskedValue: "sk-ant-...XXXX", status: "configured", lastTestedAt: null, lastTestError: null },
+      lastFallbackAt: null,
+    });
+    mockInstanceCredentialsService.getForRuntime.mockResolvedValue({
+      subscriptionToken: null, subscriptionEnabled: true, apiKey: null, apiKeyEnabled: true,
+    });
   });
 
   it("allows local board users to read and update experimental settings", async () => {
@@ -207,5 +246,79 @@ describe("instance settings routes", () => {
 
     expect(res.status).toBe(403);
     expect(mockInstanceSettingsService.updateGeneral).not.toHaveBeenCalled();
+  });
+
+  describe("claude credential routes", () => {
+    const adminActor = {
+      type: "board",
+      userId: "admin-1",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    };
+    const nonAdminActor = {
+      type: "board",
+      userId: "user-1",
+      source: "session",
+      isInstanceAdmin: false,
+      companyIds: ["company-1"],
+    };
+
+    it("GET /claude-credentials returns masked credentials for instance admins", async () => {
+      const app = await createApp(adminActor);
+      const res = await request(app).get("/api/instance/settings/claude-credentials");
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        subscription: { configured: false, status: "unconfigured" },
+        apiKey: { configured: false, status: "unconfigured" },
+      });
+    });
+
+    it("GET /claude-credentials is rejected for non-admin board users", async () => {
+      const app = await createApp(nonAdminActor);
+      const res = await request(app).get("/api/instance/settings/claude-credentials");
+      expect(res.status).toBe(403);
+    });
+
+    it("PATCH /claude-credentials/subscription saves token and logs activity", async () => {
+      mockInstanceSettingsService.get = vi.fn().mockResolvedValue({ id: "settings-1" });
+      const app = await createApp(adminActor);
+      const res = await request(app)
+        .patch("/api/instance/settings/claude-credentials/subscription")
+        .send({ token: "some-oauth-token" });
+      expect(res.status).toBe(200);
+      expect(mockInstanceCredentialsService.updateSubscription).toHaveBeenCalledWith({ token: "some-oauth-token" });
+      expect(mockLogActivity).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: "instance.settings.claude_subscription_updated" }),
+      );
+    });
+
+    it("PATCH /claude-credentials/api-key saves key and logs activity", async () => {
+      mockInstanceSettingsService.get = vi.fn().mockResolvedValue({ id: "settings-1" });
+      const app = await createApp(adminActor);
+      const res = await request(app)
+        .patch("/api/instance/settings/claude-credentials/api-key")
+        .send({ key: "sk-ant-test123" });
+      expect(res.status).toBe(200);
+      expect(mockInstanceCredentialsService.updateApiKey).toHaveBeenCalledWith({ key: "sk-ant-test123" });
+      expect(mockLogActivity).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: "instance.settings.claude_api_key_updated" }),
+      );
+    });
+
+    it("POST /claude-credentials/subscription/test returns 400 when no token is configured", async () => {
+      const app = await createApp(adminActor);
+      const res = await request(app).post("/api/instance/settings/claude-credentials/subscription/test");
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ success: false });
+    });
+
+    it("POST /claude-credentials/api-key/test returns 400 when no key is configured", async () => {
+      const app = await createApp(adminActor);
+      const res = await request(app).post("/api/instance/settings/claude-credentials/api-key/test");
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ success: false });
+    });
   });
 });
