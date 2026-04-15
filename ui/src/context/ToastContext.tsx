@@ -22,6 +22,7 @@ export interface ToastInput {
   title: string;
   body?: string;
   tone?: ToastTone;
+  /** Duration in ms before auto-dismissal. Pass `0` for a persistent toast that must be manually dismissed. */
   ttlMs?: number;
   action?: ToastAction;
 }
