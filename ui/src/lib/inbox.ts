@@ -730,10 +730,12 @@ export function getInboxWorkItems({
   issues,
   approvals,
   failedRuns = [],
+  joinRequests = [],
 }: {
   issues: Issue[];
   approvals: Approval[];
   failedRuns?: HeartbeatRun[];
+  joinRequests?: JoinRequest[];
 }): InboxWorkItem[] {
   return [
     ...issues.map((issue) => ({
@@ -750,6 +752,11 @@ export function getInboxWorkItems({
       kind: "failed_run" as const,
       timestamp: normalizeTimestamp(run.createdAt),
       run,
+    })),
+    ...joinRequests.map((joinRequest) => ({
+      kind: "join_request" as const,
+      timestamp: normalizeTimestamp(joinRequest.updatedAt ?? joinRequest.createdAt),
+      joinRequest,
     })),
   ].sort((a, b) => {
     const timestampDiff = b.timestamp - a.timestamp;
