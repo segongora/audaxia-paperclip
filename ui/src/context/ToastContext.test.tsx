@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider, useToastActions, useToastState } from "./ToastContext";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -68,5 +68,41 @@ describe("ToastContext", () => {
     act(() => {
       root.unmount();
     });
+  });
+
+  it("does not auto-dismiss a toast with ttlMs: 0 (persistent)", async () => {
+    vi.useFakeTimers();
+    const root = createRoot(container);
+    let pushToastRef: ((input: Parameters<ReturnType<typeof useToastActions>["pushToast"]>[0]) => string | null) | null = null;
+    let stateRef: ReturnType<typeof useToastState> = [];
+
+    function Consumer() {
+      const { pushToast } = useToastActions();
+      const toasts = useToastState();
+      pushToastRef = pushToast;
+      stateRef = toasts;
+      return null;
+    }
+
+    act(() => {
+      root.render(
+        <ToastProvider>
+          <Consumer />
+        </ToastProvider>,
+      );
+    });
+
+    act(() => {
+      pushToastRef!({ title: "Persistent toast", ttlMs: 0 });
+    });
+
+    expect(stateRef).toHaveLength(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(stateRef).toHaveLength(1);
+    vi.useRealTimers();
   });
 });
