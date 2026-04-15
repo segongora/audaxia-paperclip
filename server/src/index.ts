@@ -556,6 +556,16 @@ export async function startServer(): Promise<StartedServer> {
   process.env.PAPERCLIP_LISTEN_PORT = String(listenPort);
   process.env.PAPERCLIP_API_URL = `http://${runtimeApiHost}:${listenPort}`;
   
+  // Sync git identity from instance settings to process.env on startup
+  try {
+    const instanceSettingsSvc = instanceSettingsService(db as any);
+    const generalSettings = await instanceSettingsSvc.getGeneral();
+    const { syncGitEnv } = await import("./services/instance-settings.js");
+    syncGitEnv(generalSettings);
+  } catch (err) {
+    logger.error({ err }, "Failed to sync git identity from instance settings on startup");
+  }
+  
   setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
     resolveSessionFromHeaders,
