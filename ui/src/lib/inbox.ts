@@ -65,6 +65,11 @@ export type InboxWorkItem =
       kind: "failed_run";
       timestamp: number;
       run: HeartbeatRun;
+    }
+  | {
+      kind: "join_request";
+      timestamp: number;
+      joinRequest: JoinRequest;
     };
 
 export interface InboxBadgeData {
