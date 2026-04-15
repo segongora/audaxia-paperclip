@@ -113,6 +113,58 @@ export function InstanceGeneralSettings() {
       </section>
 
       <section className="rounded-xl border border-border bg-card p-5">
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Default Git Identity</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Configure the default name and email used for Git commits and pull requests created by coding agents.
+              If not set, the instance will fallback to environment defaults (Paperclip / noreply@paperclip.ing).
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label htmlFor="gitName" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Author Name
+              </label>
+              <input
+                id="gitName"
+                type="text"
+                placeholder="e.g. Sergio G"
+                defaultValue={generalQuery.data?.defaultGitAuthorName ?? ""}
+                onBlur={(e) => {
+                  const value = e.target.value.trim() || null;
+                  if (value !== generalQuery.data?.defaultGitAuthorName) {
+                    updateGeneralMutation.mutate({ defaultGitAuthorName: value });
+                  }
+                }}
+                disabled={updateGeneralMutation.isPending}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="gitEmail" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Author Email
+              </label>
+              <input
+                id="gitEmail"
+                type="email"
+                placeholder="e.g. sergio@example.com"
+                defaultValue={generalQuery.data?.defaultGitAuthorEmail ?? ""}
+                onBlur={(e) => {
+                  const value = e.target.value.trim() || null;
+                  if (value !== generalQuery.data?.defaultGitAuthorEmail) {
+                    updateGeneralMutation.mutate({ defaultGitAuthorEmail: value });
+                  }
+                }}
+                disabled={updateGeneralMutation.isPending}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
             <h2 className="text-sm font-semibold">Keyboard shortcuts</h2>

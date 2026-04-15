@@ -24,6 +24,8 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
       feedbackDataSharingPreference:
         parsed.data.feedbackDataSharingPreference ?? DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
       backupRetention: parsed.data.backupRetention ?? DEFAULT_BACKUP_RETENTION,
+      defaultGitAuthorName: parsed.data.defaultGitAuthorName ?? (process.env.PAPERCLIP_GIT_AUTHOR_NAME || null),
+      defaultGitAuthorEmail: parsed.data.defaultGitAuthorEmail ?? (process.env.PAPERCLIP_GIT_AUTHOR_EMAIL || null),
     };
   }
   return {
@@ -31,6 +33,8 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
     keyboardShortcuts: false,
     feedbackDataSharingPreference: DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
     backupRetention: DEFAULT_BACKUP_RETENTION,
+    defaultGitAuthorName: process.env.PAPERCLIP_GIT_AUTHOR_NAME || null,
+    defaultGitAuthorEmail: process.env.PAPERCLIP_GIT_AUTHOR_EMAIL || null,
   };
 }
 
@@ -56,6 +60,28 @@ function toInstanceSettings(row: typeof instanceSettings.$inferSelect): Instance
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+export function syncGitEnv(general: InstanceGeneralSettings) {
+  if (general.defaultGitAuthorName) {
+    process.env.PAPERCLIP_GIT_AUTHOR_NAME = general.defaultGitAuthorName;
+    process.env.GIT_AUTHOR_NAME = general.defaultGitAuthorName;
+    process.env.GIT_COMMITTER_NAME = general.defaultGitAuthorName;
+  } else {
+    delete process.env.PAPERCLIP_GIT_AUTHOR_NAME;
+    delete process.env.GIT_AUTHOR_NAME;
+    delete process.env.GIT_COMMITTER_NAME;
+  }
+
+  if (general.defaultGitAuthorEmail) {
+    process.env.PAPERCLIP_GIT_AUTHOR_EMAIL = general.defaultGitAuthorEmail;
+    process.env.GIT_AUTHOR_EMAIL = general.defaultGitAuthorEmail;
+    process.env.GIT_COMMITTER_EMAIL = general.defaultGitAuthorEmail;
+  } else {
+    delete process.env.PAPERCLIP_GIT_AUTHOR_EMAIL;
+    delete process.env.GIT_AUTHOR_EMAIL;
+    delete process.env.GIT_COMMITTER_EMAIL;
+  }
 }
 
 export function instanceSettingsService(db: Db) {
@@ -108,6 +134,7 @@ export function instanceSettingsService(db: Db) {
         ...normalizeGeneralSettings(current.general),
         ...patch,
       });
+      syncGitEnv(nextGeneral);
       const now = new Date();
       const [updated] = await db
         .update(instanceSettings)

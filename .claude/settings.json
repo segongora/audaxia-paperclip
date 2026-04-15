@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pnpm --filter @paperclipai/server build)"
+      "Bash(pnpm --filter @paperclipai/server build)",
+      "Bash(pnpm --filter @paperclipai/ui exec tsc --noEmit)",
+      "Bash(pnpm --filter @paperclipai/server exec tsc --noEmit)",
+      "Bash(echo \"UI_TSC_EXIT:$?\")",
+      "Bash(echo \"SERVER_TSC_EXIT:$?\")"
     ]
   }
 }

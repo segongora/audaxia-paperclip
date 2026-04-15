@@ -30,6 +30,7 @@ import {
   isClaudeMaxTurnsResult,
   isClaudeUnknownSessionError,
   isClaudeSubscriptionExhausted,
+  isClaudeSubscriptionExhaustedInOutput,
 } from "./parse.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
@@ -618,6 +619,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     instanceApiKey.length > 0 &&
     !hasNonEmptyEnvValue(env, "ANTHROPIC_API_KEY"); // only activate if agent doesn't already use API key
 
+  if (!hasDualAuth && instanceApiKey.length === 0) {
+    // Diagnostic: the server did not inject an instance API key. This means either no API key
+    // is configured in Instance Settings, the key could not be decrypted (check
+    // PAPERCLIP_SECRETS_MASTER_KEY is set as a persistent env var), or the API key source
+    // is disabled.
+    await onLog("stdout", "[paperclip] No instance API key available — dual-auth fallback is inactive.\n");
+  }
+
   const initial = await runAttempt(sessionId ?? null);
 
   // Session-not-found retry (existing logic)
@@ -636,8 +645,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
   }
 
-  // Dual-auth fallback: subscription exhausted → retry with API key
-  if (hasDualAuth && isClaudeSubscriptionExhausted(initial.parsed)) {
+  // Dual-auth fallback: subscription exhausted → retry with API key.
+  // Check both the parsed JSON result and the raw output, since the Claude CLI may exit without
+  // a clean JSON result event when the limit is hit mid-stream.
+  const subscriptionExhausted =
+    isClaudeSubscriptionExhausted(initial.parsed) ||
+    isClaudeSubscriptionExhaustedInOutput(initial.proc.stdout, initial.proc.stderr);
+
+  if (hasDualAuth && subscriptionExhausted) {
     await onLog(
       "stdout",
       "[paperclip] Subscription credits exhausted — retrying with instance API key.\n",

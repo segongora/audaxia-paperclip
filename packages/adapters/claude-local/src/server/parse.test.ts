@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isClaudeSubscriptionExhausted } from "./parse.js";
+import { isClaudeSubscriptionExhausted, isClaudeSubscriptionExhaustedInOutput } from "./parse.js";
 
 describe("isClaudeSubscriptionExhausted", () => {
   it("returns false when parsed is null", () => {
@@ -38,5 +38,33 @@ describe("isClaudeSubscriptionExhausted", () => {
 
   it("returns false when result field is missing", () => {
     expect(isClaudeSubscriptionExhausted({ is_error: true })).toBe(false);
+  });
+
+  it("returns true for \"you've hit your usage limit\" variant", () => {
+    expect(
+      isClaudeSubscriptionExhausted({ is_error: true, result: "You've hit your usage limit · resets 10pm (UTC)" }),
+    ).toBe(true);
+  });
+});
+
+describe("isClaudeSubscriptionExhaustedInOutput", () => {
+  it("returns false when neither stdout nor stderr contains the limit phrase", () => {
+    expect(isClaudeSubscriptionExhaustedInOutput("some stdout", "some stderr")).toBe(false);
+  });
+
+  it("returns true when stdout contains the limit phrase", () => {
+    expect(
+      isClaudeSubscriptionExhaustedInOutput("You've hit your limit · resets 10pm (UTC)", ""),
+    ).toBe(true);
+  });
+
+  it("returns true when stderr contains the limit phrase", () => {
+    expect(
+      isClaudeSubscriptionExhaustedInOutput("", "Error: you have hit your usage limit"),
+    ).toBe(true);
+  });
+
+  it("returns false when both are empty", () => {
+    expect(isClaudeSubscriptionExhaustedInOutput("", "")).toBe(false);
   });
 });

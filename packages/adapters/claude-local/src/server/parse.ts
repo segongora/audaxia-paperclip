@@ -167,16 +167,26 @@ export function isClaudeMaxTurnsResult(parsed: Record<string, unknown> | null | 
   return /max(?:imum)?\s+turns?/i.test(resultText);
 }
 
+const SUBSCRIPTION_EXHAUSTED_RE = /you'?ve?\s+hit\s+your\s+(usage\s+)?limit|you\s+have\s+hit\s+your\s+(usage\s+)?limit/i;
+
 /**
  * Detect subscription credit exhaustion per PRD FR-3:
- * is_error: true AND result contains "You've hit your limit"
+ * is_error: true AND result contains "You've hit your limit" (or variations).
  */
 export function isClaudeSubscriptionExhausted(parsed: Record<string, unknown> | null): boolean {
   if (!parsed) return false;
   const isError = parsed.is_error === true;
   if (!isError) return false;
-  const resultText = asString(parsed.result, "").toLowerCase();
-  return resultText.includes("you've hit your limit") || resultText.includes("you have hit your limit");
+  const resultText = asString(parsed.result, "");
+  return SUBSCRIPTION_EXHAUSTED_RE.test(resultText);
+}
+
+/**
+ * Detect subscription exhaustion from raw process output (stdout + stderr).
+ * Used as a fallback when the Claude CLI exits without a parseable JSON result.
+ */
+export function isClaudeSubscriptionExhaustedInOutput(stdout: string, stderr: string): boolean {
+  return SUBSCRIPTION_EXHAUSTED_RE.test(stdout) || SUBSCRIPTION_EXHAUSTED_RE.test(stderr);
 }
 
 export function isClaudeUnknownSessionError(parsed: Record<string, unknown>): boolean {

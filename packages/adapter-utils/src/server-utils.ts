@@ -552,6 +552,17 @@ export function buildPaperclipEnv(agent: { id: string; companyId: string }): Rec
   const runtimePort = process.env.PAPERCLIP_LISTEN_PORT ?? process.env.PORT ?? "3100";
   const apiUrl = process.env.PAPERCLIP_API_URL ?? `http://${runtimeHost}:${runtimePort}`;
   vars.PAPERCLIP_API_URL = apiUrl;
+
+  // Propagate git identity if configured in the environment
+  if (process.env.PAPERCLIP_GIT_AUTHOR_NAME) {
+    vars.GIT_AUTHOR_NAME = process.env.PAPERCLIP_GIT_AUTHOR_NAME;
+    vars.GIT_COMMITTER_NAME = process.env.PAPERCLIP_GIT_AUTHOR_NAME;
+  }
+  if (process.env.PAPERCLIP_GIT_AUTHOR_EMAIL) {
+    vars.GIT_AUTHOR_EMAIL = process.env.PAPERCLIP_GIT_AUTHOR_EMAIL;
+    vars.GIT_COMMITTER_EMAIL = process.env.PAPERCLIP_GIT_AUTHOR_EMAIL;
+  }
+
   return vars;
 }
 
