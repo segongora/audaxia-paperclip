@@ -92,6 +92,52 @@ console.log(JSON.stringify({ type: "result", session_id: "claude-session-2", res
   await fs.chmod(commandPath, 0o755);
 }
 
+/**
+ * First invocation: emits subscription-exhausted error (is_error: true).
+ * Second invocation (when ANTHROPIC_API_KEY is set): succeeds.
+ * Capture file is a JSON array of call payloads indexed by call count.
+ */
+async function writeSubscriptionExhaustedThenSuccessCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+
+const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
+const payload = {
+  argv: process.argv.slice(2),
+  prompt: fs.readFileSync(0, "utf8"),
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
+};
+
+const entries = capturePath && fs.existsSync(capturePath)
+  ? JSON.parse(fs.readFileSync(capturePath, "utf8"))
+  : [];
+entries.push(payload);
+if (capturePath) fs.writeFileSync(capturePath, JSON.stringify(entries), "utf8");
+
+const isSecondCall = entries.length > 1;
+
+if (!isSecondCall) {
+  // First call: subscription exhausted
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    subtype: "error",
+    is_error: true,
+    session_id: null,
+    result: "You've hit your limit · resets 10pm (UTC)",
+    errors: [],
+    usage: { input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 },
+  }) + "\\n");
+  process.exit(1);
+}
+
+// Second call: success via API key
+process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "api-key-session", model: "claude-sonnet" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", session_id: "api-key-session", result: "done via api key", usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 } }) + "\\n");
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function setupExecuteEnv(
   root: string,
   options?: { commandWriter?: (commandPath: string) => Promise<void> },
@@ -540,6 +586,88 @@ describe("claude execute", () => {
       else process.env.PAPERCLIP_HOME = previousPaperclipHome;
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+
+  describe("dual-auth API key fallback", () => {
+    it("retries with ANTHROPIC_API_KEY and sets credentialFallbackOccurred when subscription is exhausted", async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-dual-auth-"));
+      const capturePath = path.join(root, "capture.json");
+      const { workspace, commandPath, restore } = await setupExecuteEnv(root, {
+        commandWriter: writeSubscriptionExhaustedThenSuccessCommand,
+      });
+
+      try {
+        const result = await execute({
+          runId: "run-dual-auth",
+          agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            env: {
+              PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            },
+            promptTemplate: "Do work.",
+            _instanceClaudeApiKey: "sk-ant-test-api-key",
+          },
+          context: {},
+          authToken: "tok",
+          onLog: async () => {},
+          onMeta: async () => {},
+        });
+
+        expect((result as any).credentialFallbackOccurred).toBe(true);
+        expect(result.billingType).toBe("api");
+        expect(result.errorMessage).toBeNull();
+
+        const captures: Array<{ anthropicApiKey: string | null; argv: string[] }> =
+          JSON.parse(await fs.readFile(capturePath, "utf8"));
+        expect(captures).toHaveLength(2);
+        expect(captures[0]!.anthropicApiKey).toBeNull();
+        expect(captures[1]!.anthropicApiKey).toBe("sk-ant-test-api-key");
+      } finally {
+        restore();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it("does NOT fall back when _instanceClaudeApiKey is absent", async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-dual-auth-nokey-"));
+      const capturePath = path.join(root, "capture.json");
+      const { workspace, commandPath, restore } = await setupExecuteEnv(root, {
+        commandWriter: writeSubscriptionExhaustedThenSuccessCommand,
+      });
+
+      try {
+        const result = await execute({
+          runId: "run-dual-auth-nokey",
+          agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            env: {
+              PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            },
+            promptTemplate: "Do work.",
+            // No _instanceClaudeApiKey
+          },
+          context: {},
+          authToken: "tok",
+          onLog: async () => {},
+          onMeta: async () => {},
+        });
+
+        expect((result as any).credentialFallbackOccurred).toBeUndefined();
+        // Only one attempt was made
+        const captures: Array<{ anthropicApiKey: string | null }> =
+          JSON.parse(await fs.readFile(capturePath, "utf8"));
+        expect(captures).toHaveLength(1);
+      } finally {
+        restore();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
   });
 
   it("starts a fresh Claude session when the stable prompt bundle changes", async () => {

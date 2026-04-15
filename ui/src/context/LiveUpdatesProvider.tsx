@@ -794,7 +794,7 @@ function handleLiveEvent(
       title: "Subscription credits exhausted",
       body: "Claude requests are now using your API key.",
       tone: "warn",
-      ttlMs: 12000,
+      ttlMs: 0,
     });
   }
 }
