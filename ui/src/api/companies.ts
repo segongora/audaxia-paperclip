@@ -6,6 +6,7 @@ import type {
   CompanyPortabilityImportResult,
   CompanyPortabilityPreviewRequest,
   CompanyPortabilityPreviewResult,
+  CompanyPortabilitySidebarOrder,
   UpdateCompanyBranding,
 } from "@paperclipai/shared";
 import { api } from "./client";
@@ -65,6 +66,7 @@ export const companiesApi = {
       issues?: string[];
       projectIssues?: string[];
       selectedFiles?: string[];
+      sidebarOrder?: CompanyPortabilitySidebarOrder;
     },
   ) =>
     api.post<CompanyPortabilityExportPreviewResult>(`/companies/${companyId}/exports/preview`, data),
@@ -78,6 +80,7 @@ export const companiesApi = {
       issues?: string[];
       projectIssues?: string[];
       selectedFiles?: string[];
+      sidebarOrder?: CompanyPortabilitySidebarOrder;
     },
   ) =>
     api.post<CompanyPortabilityExportResult>(`/companies/${companyId}/exports`, data),

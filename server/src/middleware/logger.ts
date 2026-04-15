@@ -17,7 +17,13 @@ function resolveServerLogDir(): string {
 }
 
 const logDir = resolveServerLogDir();
-fs.mkdirSync(logDir, { recursive: true });
+let fileLoggingAvailable = false;
+try {
+  fs.mkdirSync(logDir, { recursive: true });
+  fileLoggingAvailable = true;
+} catch {
+  console.warn(`[logger] Cannot create log directory '${logDir}' — file logging disabled, using stdout only.`);
+}
 
 const logFile = path.join(logDir, "server.log");
 
@@ -27,22 +33,27 @@ const sharedOpts = {
   singleLine: true,
 };
 
+const transportTargets: pino.TransportTargetOptions[] = [
+  {
+    target: "pino-pretty",
+    options: { ...sharedOpts, ignore: "pid,hostname,req,res,responseTime", colorize: true, destination: 1 },
+    level: "info",
+  },
+];
+
+if (fileLoggingAvailable) {
+  transportTargets.push({
+    target: "pino-pretty",
+    options: { ...sharedOpts, colorize: false, destination: logFile, mkdir: true },
+    level: "debug",
+  });
+}
+
 export const logger = pino({
   level: "debug",
   redact: ["req.headers.authorization"],
 }, pino.transport({
-  targets: [
-    {
-      target: "pino-pretty",
-      options: { ...sharedOpts, ignore: "pid,hostname,req,res,responseTime", colorize: true, destination: 1 },
-      level: "info",
-    },
-    {
-      target: "pino-pretty",
-      options: { ...sharedOpts, colorize: false, destination: logFile, mkdir: true },
-      level: "debug",
-    },
-  ],
+  targets: transportTargets,
 }));
 
 export const httpLogger = pinoHttp({

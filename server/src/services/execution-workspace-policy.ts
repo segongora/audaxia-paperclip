@@ -1,4 +1,5 @@
 import type {
+  ExecutionWorkspace,
   ExecutionWorkspaceMode,
   ExecutionWorkspaceStrategy,
   IssueExecutionWorkspaceSettings,
@@ -130,6 +131,20 @@ export function defaultIssueExecutionWorkspaceSettingsForProject(
             ? "agent_default"
             : "shared_workspace",
   };
+}
+
+export function issueExecutionWorkspaceModeForPersistedWorkspace(
+  persistedMode: ExecutionWorkspace["mode"] | string,
+): ParsedExecutionWorkspaceMode {
+  if (
+    persistedMode === "isolated_workspace" ||
+    persistedMode === "operator_branch" ||
+    persistedMode === "shared_workspace"
+  ) {
+    return persistedMode;
+  }
+  // adapter_managed and cloud_sandbox behave like agent_default from the issue's perspective
+  return "agent_default";
 }
 
 export function resolveExecutionWorkspaceMode(input: {
