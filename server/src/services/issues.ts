@@ -39,10 +39,31 @@ import { getDefaultCompanyGoal } from "./goals.js";
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
 
-function assertTransition(from: string, to: string) {
+async function assertStatusTransitionSafety(db: Db, issueId: string, from: string, to: string) {
   if (from === to) return;
   if (!ALL_ISSUE_STATUSES.includes(to)) {
     throw conflict(`Unknown issue status: ${to}`);
+  }
+
+  // Verification Gate: Block transition to 'done' or 'in_review' if the last run failed.
+  if (to === "done" || to === "in_review") {
+     const lastRun = await db
+       .select({
+         id: heartbeatRuns.id,
+         exitCode: heartbeatRuns.exitCode,
+         error: heartbeatRuns.error
+       })
+       .from(heartbeatRuns)
+       .where(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`)
+       .orderBy(desc(heartbeatRuns.createdAt))
+       .limit(1)
+       .then(rows => rows[0] ?? null);
+
+     if (lastRun && (lastRun.exitCode !== 0 || lastRun.error)) {
+       throw conflict(
+         `Cannot transition to "${to}": The most recent agent run for this issue failed (exit code: ${lastRun.exitCode ?? 'unknown'}, error: ${lastRun.error ?? 'none'}). Please ensure tests pass and changes are committed.`
+       );
+     }
   }
 }
 
@@ -1586,7 +1607,7 @@ export function issueService(db: Db) {
       }
 
       if (issueData.status) {
-        assertTransition(existing.status, issueData.status);
+        await assertStatusTransitionSafety(dbOrTx === db ? db : dbOrTx, id, existing.status, issueData.status);
       }
 
       const patch: Partial<typeof issues.$inferInsert> = {
