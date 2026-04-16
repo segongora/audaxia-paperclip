@@ -11,6 +11,14 @@ import {
 } from "@paperclipai/adapter-claude-local/server";
 import { agentConfigurationDoc as claudeAgentConfigurationDoc, models as claudeModels } from "@paperclipai/adapter-claude-local";
 import {
+  execute as anthropicRemoteExecute,
+  sessionCodec as anthropicRemoteSessionCodec,
+} from "@paperclipai/adapter-anthropic-remote/server";
+import {
+  agentConfigurationDoc as anthropicRemoteAgentConfigurationDoc,
+  models as anthropicRemoteModels,
+} from "@paperclipai/adapter-anthropic-remote";
+import {
   execute as codexExecute,
   listCodexSkills,
   syncCodexSkills,
@@ -193,6 +201,21 @@ const hermesLocalAdapter: ServerAdapterModule = {
   detectModel: () => detectModelFromHermes(),
 };
 
+const anthropicRemoteAdapter: ServerAdapterModule = {
+  type: "anthropic_remote",
+  execute: anthropicRemoteExecute,
+  testEnvironment: async () => ({
+    adapterType: "anthropic_remote",
+    status: "pass",
+    checks: [],
+    testedAt: new Date().toISOString(),
+  }),
+  sessionCodec: anthropicRemoteSessionCodec,
+  models: anthropicRemoteModels,
+  supportsLocalAgentJwt: true,
+  agentConfigurationDoc: anthropicRemoteAgentConfigurationDoc,
+};
+
 const adaptersByType = new Map<string, ServerAdapterModule>();
 
 // For builtin types that are overridden by an external adapter, we keep the
@@ -214,6 +237,7 @@ function registerBuiltInAdapters() {
     geminiLocalAdapter,
     openclawGatewayAdapter,
     hermesLocalAdapter,
+    anthropicRemoteAdapter,
     processAdapter,
     httpAdapter,
   ]) {
