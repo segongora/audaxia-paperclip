@@ -3,11 +3,13 @@ import path from "node:path";
 import { 
   AdapterExecutionContext, 
   AdapterExecutionResult,
+} from "@paperclipai/adapter-utils";
+import {
   asString,
   asNumber,
   parseObject,
   buildPaperclipEnv,
-} from "@paperclipai/adapter-utils";
+} from "@paperclipai/adapter-utils/server-utils";
 import { runChildProcess } from "@paperclipai/adapter-utils/server-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -16,7 +18,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const model = asString(config.model, "claude-3-7-sonnet-20250219");
   const maxTurns = asNumber(config.maxTurnsPerRun, 10);
-  const apiKey = asString(config.apiKey) || (ctx.config.env as any)?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  const apiKey = asString(config.apiKey, "") || (ctx.config.env as any)?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
     return {
