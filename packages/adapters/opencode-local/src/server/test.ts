@@ -27,7 +27,7 @@ import {
 } from "@paperclipai/adapter-utils/execution-target";
 import { discoverOpenCodeModels, ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
 import { parseOpenCodeJsonl } from "./parse.js";
-import { SANDBOX_INSTALL_COMMAND } from "../index.js";
+import { SANDBOX_INSTALL_COMMAND, models as staticModels } from "../index.js";
 import { prepareOpenCodeRuntimeConfig } from "./runtime-config.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
@@ -313,12 +313,27 @@ export async function testEnvironment(
         });
         modelValidationPassed = true;
       } catch (err) {
-        checks.push({
-          code: "opencode_model_invalid",
-          level: "error",
-          message: err instanceof Error ? err.message : "Configured model is unavailable.",
-          hint: "Run `opencode models` and choose a currently available provider/model ID.",
-        });
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const modelsWereDiscovered = checks.some(
+          (check) => check.code === "opencode_models_discovered",
+        );
+        const isKnownStaticModel = staticModels.some((m) => m.id === configuredModel);
+        if (modelsWereDiscovered && isKnownStaticModel) {
+          checks.push({
+            code: "opencode_model_invalid",
+            level: "warn",
+            message: errMsg,
+            hint: "The model was not listed by `opencode models` but is a known model. Provider auth may be incomplete. Proceeding with hello probe.",
+          });
+          modelValidationPassed = true;
+        } else {
+          checks.push({
+            code: "opencode_model_invalid",
+            level: "error",
+            message: errMsg,
+            hint: "Run `opencode models` and choose a currently available provider/model ID.",
+          });
+        }
       }
     }
 
