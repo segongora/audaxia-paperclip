@@ -24,7 +24,7 @@ describe("openCode models", () => {
   });
 
   it("accepts a provider/model id without running discovery", () => {
-    expect(requireOpenCodeModelId("openai/gpt-5.2-codex")).toBe("openai/gpt-5.2-codex");
+    expect(requireOpenCodeModelId("opencode-go/kimi-k2.6")).toBe("opencode-go/kimi-k2.6");
   });
 
   it("rejects malformed provider/model ids before discovery", () => {
