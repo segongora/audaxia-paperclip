@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 import fs from "node:fs";
 import pino from "pino";
 import { pinoHttp } from "pino-http";
@@ -16,10 +17,17 @@ function resolveServerLogDir(): string {
   return resolveDefaultLogsDir();
 }
 
-const logDir = resolveServerLogDir();
-fs.mkdirSync(logDir, { recursive: true });
-
-const logFile = path.join(logDir, "server.log");
+const preferredLogDir = resolveServerLogDir();
+let logDir: string;
+let logFile: string | undefined;
+try {
+  fs.mkdirSync(preferredLogDir, { recursive: true });
+  fs.accessSync(preferredLogDir, fs.constants.W_OK);
+  logDir = preferredLogDir;
+  logFile = path.join(logDir, "server.log");
+} catch {
+  logDir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-logs-"));
+}
 
 const sharedOpts = {
   translateTime: "SYS:HH:MM:ss",
@@ -27,23 +35,26 @@ const sharedOpts = {
   singleLine: true,
 };
 
+const targets: pino.TransportTargetOptions<Record<string, any>>[] = [
+  {
+    target: "pino-pretty",
+    options: { ...sharedOpts, ignore: "pid,hostname,req,res,responseTime", colorize: true, destination: 1 },
+    level: "info",
+  },
+];
+
+if (logFile) {
+  targets.push({
+    target: "pino-pretty",
+    options: { ...sharedOpts, colorize: false, destination: logFile, mkdir: true },
+    level: "debug",
+  });
+}
+
 export const logger = pino({
   level: "debug",
   redact: ["req.headers.authorization"],
-}, pino.transport({
-  targets: [
-    {
-      target: "pino-pretty",
-      options: { ...sharedOpts, ignore: "pid,hostname,req,res,responseTime", colorize: true, destination: 1 },
-      level: "info",
-    },
-    {
-      target: "pino-pretty",
-      options: { ...sharedOpts, colorize: false, destination: logFile, mkdir: true },
-      level: "debug",
-    },
-  ],
-}));
+}, pino.transport({ targets }));
 
 export const httpLogger = pinoHttp({
   logger,
