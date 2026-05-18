@@ -26,7 +26,7 @@ if [ "$changed" = "1" ]; then
     chown -R node:node /paperclip
 fi
 
-mkdir -p /paperclip/.config /paperclip/.local /paperclip/.railway /paperclip/.opencode
-chown node:node /paperclip/.config /paperclip/.local /paperclip/.railway /paperclip/.opencode
+mkdir -p /paperclip/.config /paperclip/.local /paperclip/.railway /paperclip/.opencode /paperclip/.supabase
+chown node:node /paperclip/.config /paperclip/.local /paperclip/.railway /paperclip/.opencode /paperclip/.supabase
 
 exec gosu node "$@"
